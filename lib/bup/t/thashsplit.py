@@ -12,7 +12,7 @@ def test_fanout_behaviour():
     # Drop in replacement for bupsplit, but splitting if the int value of a
     # byte >= BUP_BLOBBITS
     basebits = _helpers.blobbits()
-    def splitbuf(buf):
+    def splitbuf(buf, dummy):
         ofs = 0
         for c in buf:
             ofs += 1

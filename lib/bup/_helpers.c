@@ -383,12 +383,13 @@ static PyObject *splitbuf(PyObject *self, PyObject *args)
 {
     unsigned char *buf = NULL;
     Py_ssize_t len = 0;
+    Py_ssize_t min_size = 0;
     int out = 0, bits = -1;
 
-    if (!PyArg_ParseTuple(args, "t#", &buf, &len))
+    if (!PyArg_ParseTuple(args, "t#i", &buf, &len, &min_size))
 	return NULL;
     assert(len <= INT_MAX);
-    out = bupsplit_find_ofs(buf, len, &bits);
+    out = bupsplit_find_ofs(buf, len, min_size, &bits);
     if (out) assert(bits >= BUP_BLOBBITS);
     return Py_BuildValue("ii", out, bits);
 }

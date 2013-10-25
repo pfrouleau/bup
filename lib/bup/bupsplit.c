@@ -91,7 +91,7 @@ static uint32_t rollsum_sum(uint8_t *buf, size_t ofs, size_t len)
 }
 
 
-int bupsplit_find_ofs(const unsigned char *buf, int len, int *bits)
+int bupsplit_find_ofs(const unsigned char *buf, int len, int min_size, int *bits)
 {
     Rollsum r;
     int count;
@@ -100,7 +100,8 @@ int bupsplit_find_ofs(const unsigned char *buf, int len, int *bits)
     for (count = 0; count < len; count++)
     {
 	rollsum_roll(&r, buf[count]);
-	if ((r.s2 & (BUP_BLOBSIZE-1)) == ((~0) & (BUP_BLOBSIZE-1)))
+	if (((r.s2 & (BUP_BLOBSIZE-1)) == ((~0) & (BUP_BLOBSIZE-1))) &&
+	    (count >= min_size))
 	{
 	    if (bits)
 	    {

@@ -61,7 +61,7 @@ def readfile_iter(files, progress=None):
 def _splitbuf(buf, basebits, fanbits):
     while 1:
         b = buf.peek(buf.used())
-        (ofs, bits) = _helpers.splitbuf(b)
+        (ofs, bits) = _helpers.splitbuf(b, 64)
         if ofs:
             if ofs > BLOB_MAX:
                 ofs = BLOB_MAX

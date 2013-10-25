@@ -39,7 +39,7 @@
 extern "C" {
 #endif
     
-int bupsplit_find_ofs(const unsigned char *buf, int len, int *bits);
+int bupsplit_find_ofs(const unsigned char *buf, int len, int min_size, int *bits);
 int bupsplit_selftest(void);
 
 #ifdef __cplusplus
