@@ -10,11 +10,11 @@ db = None
 SKIP_KNOWN = True
 
 def create_indexes(db):
-    print "Creating indexes..."
+    log("Creating indexes...")
     db.execute("create index if not exists idx_obj_sha on objects(sha)")
     db.execute("create index if not exists idx_obj_type on objects(type)")
     db.execute("create index if not exists idx_refs on refs(a, name)")
-    print " DONE"
+    log(" DONE\n")
 
 def traverse_commit(cp, sha_hex, needed_objects):
     if sha_hex not in needed_objects or not SKIP_KNOWN:
@@ -58,11 +58,12 @@ def traverse_objects(cp, sha_hex, needed_objects):
                     db.execute('INSERT INTO refs VALUES (?,?,?,?)',
                         (sha_hex, sha.encode('hex'), mode, mangled_name))
                 except:
-                    print("# error with %s as %s" %(sha_hex, mangled_name))
-                    raise
+                    # how should we handle unicode file name?
+                    db.execute('INSERT INTO refs VALUES (?,?,?,?)',
+                        (sha_hex, sha.encode('hex'), mode, 'unicode_name'))
 
                 for (t,s,c,l) in traverse_objects(cp, sha.encode('hex'),
-                                            needed_objects):
+                                                  needed_objects):
                     sum += c
                     yield (t,s,c,l)
             yield ('tree', sha_hex, sum, len(content))
@@ -100,9 +101,10 @@ def fill_database():
         log('Traversing %s to find needed objects...\n' % refname[11:])
         for date, sha in ((date, sha.encode('hex')) for date, sha in
                           git.rev_list(refname)):
+            log('Traversing commit %s to find needed objects...\n' % sha)
             for type, sha_, sum, size in traverse_commit(cp, sha, needed_objects):
-                qprogress('                             \r')
-                sys.stdout.write("%s\t%s\t%d\t%d\n" % (type, sha_, sum, size))
+                if not type == 'blob':
+                    log("%s  %s  %12d  %5d\n" % (type, sha_, sum, size))
                 traversed_objects_counter += 1
                 qprogress('Traversing objects: %d\r' % traversed_objects_counter)
 
@@ -112,9 +114,11 @@ def fill_database():
         for key in tags:
             log('Traversing tag %s to find needed objects...\n' % ", ".join(tags[key]))
             for type, sha, sum, size in traverse_commit(cp, sha, needed_objects):
-                sys.stdout.write("%s\t%s\t%d\t%d\n" % (type, sha_, sum, size))
+                if not type == 'blob':
+                    log("%s  %s  %12d  %5d\n" % (type, sha_, sum, size))
                 traversed_objects_counter += 1
                 qprogress('Traversing objects: %d\r' % traversed_objects_counter)
+
     progress('Traversing objects: %d, done.\n' % traversed_objects_counter)
 
     create_indexes(db)
