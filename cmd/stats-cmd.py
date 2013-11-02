@@ -120,13 +120,11 @@ def fill_database():
                 qprogress('Traversing objects: %d\r' % traversed_objects_counter)
 
     progress('Traversing objects: %d, done.\n' % traversed_objects_counter)
-
-    create_indexes(db)
-
-    db.commit()
-
     if traversed_objects_counter == 0:
         o.fatal('No reachable objects found.')
+
+    create_indexes(db)
+    db.commit()
 
 
 def _show_blobs(db, hash, ofs):
