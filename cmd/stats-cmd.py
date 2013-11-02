@@ -9,6 +9,13 @@ db = None
 
 SKIP_KNOWN = True
 
+def create_indexes(db):
+    print "Creating indexes..."
+    db.execute("create index if not exists idx_obj_sha on objects(sha)")
+    db.execute("create index if not exists idx_obj_type on objects(type)")
+    db.execute("create index if not exists idx_refs on refs(a, name)")
+    print " DONE"
+
 def traverse_commit(cp, sha_hex, needed_objects):
     if sha_hex not in needed_objects or not SKIP_KNOWN:
         needed_objects.add(sha_hex)
@@ -47,7 +54,12 @@ def traverse_objects(cp, sha_hex, needed_objects):
             content = "".join(it)
             sum = len(content)
             for (mode,mangled_name,sha) in git.tree_decode(content):
-                db.execute('INSERT INTO refs VALUES (?,?,?,?)', (sha_hex, sha.encode('hex'), mode, mangled_name))
+                try:
+                    db.execute('INSERT INTO refs VALUES (?,?,?,?)',
+                        (sha_hex, sha.encode('hex'), mode, mangled_name))
+                except:
+                    print("# error with %s as %s" %(sha_hex, mangled_name))
+                    raise
 
                 for (t,s,c,l) in traverse_objects(cp, sha.encode('hex'),
                                             needed_objects):
@@ -104,6 +116,8 @@ def fill_database():
                 traversed_objects_counter += 1
                 qprogress('Traversing objects: %d\r' % traversed_objects_counter)
     progress('Traversing objects: %d, done.\n' % traversed_objects_counter)
+
+    create_indexes(db)
 
     db.commit()
 
