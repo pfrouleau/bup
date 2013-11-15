@@ -111,7 +111,7 @@ def traverse_objects(cp, sha_hex, needed_objects, check_dup):
             yield ('blob', sha_hex, len(content), len(content))
 
 
-def fill_database():
+def fill_database(show_progress):
     global db
 
     cp = git.CatPipe()
@@ -133,9 +133,9 @@ def fill_database():
         log('Traversing %s to find needed objects...\n' % refname[11:])
         for date, sha_hex in ((date, sha.encode('hex')) for date, sha in
                               git.rev_list(refname)):
-            log('Traversing commit %s to find needed objects...\n' % sha.decode('hex'))
+            log('Traversing commit %s to find needed objects...\n' % sha_hex)
             for type, sha_, sum, size in traverse_commit(cp, sha_hex, needed_objects):
-                if not type == 'blob':
+                if show_progress and not type == 'blob':
                     log("%s  %s  %12d  %5d\n" % (type, sha_, sum, size))
                 traversed_objects_counter += 1
                 qprogress('Traversing objects: %d\r' % traversed_objects_counter)
@@ -194,6 +194,18 @@ def show_blobs(hash):
     print("# min   = %d" % min)
 
 
+def show_parent(hash):
+    global db
+
+    db = open_database(False)
+
+    cur = db.cursor()
+    cur.execute('SELECT DISTINCT a FROM refs WHERE refs.b=:b ', {"b": hash})
+
+    print "Parent of %s" % hash
+    print cur.fetchall()
+
+
 def add_objects(hash):
     global db
 
@@ -230,6 +242,7 @@ bup stats
 --
 a,add=     add the specified hash
 f,reset    reset the database
+p,parent=  show the parent of a hash
 s,show=    show blobs for hash
 q,quiet    don't show progress meter
 """
@@ -242,7 +255,9 @@ opt.progress = (istty2 and not opt.quiet)
 if opt.show:
     show_blobs(opt.show)
 elif opt.reset:
-    fill_database()
+    fill_database(opt.progress)
+elif opt.parent:
+    show_parent(opt.parent)
 elif opt.add:
     add_objects(opt.add)
 else:
