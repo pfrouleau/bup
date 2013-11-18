@@ -266,3 +266,22 @@ def test_commit_parsing():
         restore_env_var('GIT_COMMITTER_EMAIL', orig_committer_email)
     if wvfailure_count() == initial_failures:
         subprocess.call(['rm', '-rf', tmpdir])
+
+
+@wvtest
+def test_config():
+    initial_failures = wvfailure_count()
+    tmpdir = tempfile.mkdtemp(dir=bup_tmp, prefix='bup-tgit-')
+    os.environ['BUP_DIR'] = bupdir = tmpdir + "/bup"
+
+    git.init_repo(bupdir)
+
+    WVPASSEQ(git.min_blob_size(), 56)
+
+    git.set_config('bup.minBlobSize', 512)
+    WVPASSEQ(git.min_blob_size(), 512)
+
+    WVPASSEQ(git.get_config('bup.nonExistingValue', 3), 3)
+
+    if wvfailure_count() == initial_failures:
+        subprocess.call(['rm', '-rf', tmpdir])
