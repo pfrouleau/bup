@@ -159,7 +159,7 @@ def fill_database(show_progress):
     db.commit()
 
 
-def _show_blobs(db, hash, ofs):
+def _show_blobs(db, hash, ofs, depth):
     #print("# %12d %s" % (ofs, hash))
     cur = db.cursor()
     #db.execute('CREATE TABLE objects (sha text, type text, size integer);')
@@ -170,12 +170,13 @@ def _show_blobs(db, hash, ofs):
     for sha, type, size, name, mode in cur.fetchall():
         #print("# %s %s %X %12d %s" % (sha, type, mode, size, name))
         if type == 'tree':
-            for total1, sha1, size1, ofs1, type1 in _show_blobs(db, sha, total):
+            yield (total, sha, size, ofs, type, depth)
+            for total1, sha1, size1, ofs1, type1, depth1 in _show_blobs(db, sha, total, depth+1):
                 total = total1
-                yield (total, sha1, size1, ofs1, type1)
+                yield (total, sha1, size1, ofs1, type1, depth1)
         elif type == 'blob':
             total += size
-            yield (total, sha, size, ofs, type)
+            yield (total, sha, size, ofs, type, depth)
             ofs += size
 
 
@@ -185,10 +186,10 @@ def show_blobs(hash):
     db = open_database(False, True)
     t = 0
     min = 32768+1
-    for total, sha, size, ofs, type in _show_blobs(db, hash, t):
-        print("%12d %12d %s  %s" % (size, ofs, sha, type))
+    for total, sha, size, ofs, type, depth in _show_blobs(db, hash, t, 0):
+        print("%12d %12d %s  %s %d" % (size, ofs, sha, type, depth))
         t = total
-        if (min > size and size > 0): min = size;
+        if (min > size and size > 0 and type == 'blob'): min = size;
     print("#------------------------")
     print("# Total =    %12d" % t)
     print("# min   = %d" % min)
