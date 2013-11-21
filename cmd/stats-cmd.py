@@ -206,6 +206,19 @@ def show_parent(hash):
     print cur.fetchall()
 
 
+def show_tree_size():
+    global db
+
+    db = open_database(False, True)
+
+    cur = db.cursor()
+    cur.execute('SELECT a, count(b) as c FROM refs group by a order by c')
+
+    print "Tree sizes:"
+    for hash, n in cur.fetchall():
+        print("%s %d" % (hash,n))
+
+
 def add_objects(hash):
     global db
 
@@ -244,6 +257,7 @@ a,add=     add the specified hash
 f,reset    reset the database
 p,parent=  show the parent of a hash
 s,show=    show blobs for hash
+t,tree     show tree's size
 q,quiet    don't show progress meter
 """
 o = options.Options(optspec)
@@ -260,5 +274,7 @@ elif opt.parent:
     show_parent(opt.parent)
 elif opt.add:
     add_objects(opt.add)
+elif opt.tree:
+    show_tree_size()
 else:
     print "Nothing to do"
