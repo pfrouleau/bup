@@ -198,7 +198,7 @@ def show_blobs(hash):
 def show_parent(hash):
     global db
 
-    db = open_database(False)
+    db = open_database(False, True)
 
     cur = db.cursor()
     cur.execute('SELECT DISTINCT a FROM refs WHERE refs.b=:b ', {"b": hash})
