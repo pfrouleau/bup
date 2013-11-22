@@ -10,10 +10,10 @@ SKIP_KNOWN = True
 
 def create_indexes(db):
     log("Creating indexes...")
-    db.execute("create index if not exists idx_obj_sha on objects(sha)")
-    db.execute("create index if not exists idx_obj_type on objects(type)")
-    db.execute("create index if not exists idx_refs on refs(a, name)")
-    log(" DONE\n")
+    # db.execute("create index if not exists idx_obj_sha on objects(sha)")
+    # db.execute("create index if not exists idx_obj_type on objects(type)")
+    # db.execute("create index if not exists idx_refs on refs(a, name)")
+    # log(" DONE\n")
 
 
 def open_database(reset, must_exist):
@@ -27,88 +27,83 @@ def open_database(reset, must_exist):
             o.fatal("no database available (%s)" % db_path);
 
     db = sqlite3.connect(db_path)
-    db.execute('CREATE TABLE IF NOT EXISTS objects (sha text, type text, size integer);')
-    db.execute('CREATE TABLE IF NOT EXISTS refs (a text, b text, mode integer, name text);')
+    db.execute('CREATE TABLE IF NOT EXISTS objects (id INTEGER PRIMARY KEY AUTOINCREMENT, sha TEXT UNIQUE, type TEXT, size INTEGER);')
+    db.execute('CREATE TABLE IF NOT EXISTS refs (r_id INTEGER, o_id INTEGER, mode INTEGER, name TEXT, PRIMARY KEY (r_id, o_id, name));')
 
     return db
 
+# Out: object's id
+def insert_object(sha, type, size):
+    db.execute('INSERT OR IGNORE INTO objects VALUES (null,?,?,?)', (sha, type, size))
 
-def traverse_commit(cp, sha_hex, needed_objects):
-    if sha_hex not in needed_objects or not SKIP_KNOWN:
-        needed_objects.add(sha_hex)
-
-        it = iter(cp.get(sha_hex))
-        type = it.next()
-        assert(type == 'commit')
-        content = "".join(it)
-        tree_sha = content.split("\n")[0][5:].rstrip(" ")
-        db.execute('INSERT INTO refs VALUES (?,?,?,?)', (sha_hex, tree_sha, 0, 'commit'))
-        sum = len(content)
-        for (t,s,c,l) in traverse_objects(cp, tree_sha, needed_objects, False):
-            sum += c
-            yield (t,s,c,l)
-            db.execute('INSERT INTO objects VALUES (?,?,?)', (s, t, c))
-        db.execute('INSERT INTO objects VALUES (?,?,?)', (sha_hex, type, sum))
-        yield ('commit', sha_hex, sum, len(content))
+    cur = db.cursor()
+    cur.execute('SELECT id FROM objects WHERE sha=:sha', {"sha": sha})
+    return cur.fetchone()[0]
 
 
-def traverse_hash(cp, sha_hex, needed_objects):
+def insert_ref(r_id, o_id, mode, name):
+    if r_id:
+        try:
+            db.execute('INSERT OR IGNORE INTO refs VALUES (?,?,?,?)',
+                (r_id, o_id, mode, name))
+        except:
+            # how should we handle unicode file name?
+            db.execute('INSERT OR IGNORE INTO refs VALUES (?,?,?,?)',
+                (r_id, o_id, mode, 'unicode_name'))
+
+
+# yield: type, sha, length
+def traverse_commit(cp, needed_objects, sha_hex):
+
     it = iter(cp.get(sha_hex))
     type = it.next()
-    it = None
+    assert(type == 'commit')
+    content = "".join(it)
+    length = len(content)
+
+    o_id = insert_object(sha_hex, type, length)
+
+    tree_sha = content.split("\n")[0][5:].rstrip(" ")
+
+    yield (type, sha_hex, length)
+    for obj in traverse_objects(cp, needed_objects, False,
+                        o_id, 0, 'commit', tree_sha):
+        yield obj
+
+
+# yield: type, sha, length
+def traverse_hash(cp, needed_objects, sha_hex):
+    for obj in traverse_objects(cp, needed_objects, True, 0, 0, '-', sha_hex):
+        yield obj
+
+
+# yield: type, sha, length
+def traverse_objects(cp, needed_objects, check_dup, r_id, r_mode, r_name, sha_hex):
+    it = iter(cp.get(sha_hex))
+    type = it.next()
+
+    content = "".join(it)
+    length = len(content)
+    o_id = insert_object(sha_hex, type, length)
+    insert_ref(r_id, o_id, r_mode, r_name)
+
+    yield (type, sha_hex, length)
 
     if type == 'blob':
-        (t,s,c,l) = traverse_objects(cp, sha_hex, needed_objects, True)
-        yield (t,s,c,l)
-        db.execute('INSERT INTO objects VALUES (?,?,?)', (s, t, c))
-
-    elif type == 'commit':
-        # TODO: must check for DUPS
-        yield traverse_commit(pc, sha_hex, needed_objects)
+        return
 
     elif type == 'tree':
-        log("# hash type is tree\n")
-        for (t,s,c,l) in traverse_objects(cp, sha_hex, needed_objects, True):
-            yield (t,s,c,l)
-            db.execute('INSERT OR IGNORE INTO objects VALUES (?,?,?)', (s, t, c))
-
-
-def traverse_objects(cp, sha_hex, needed_objects, check_dup):
-    if sha_hex not in needed_objects or not SKIP_KNOWN:
-        needed_objects.add(sha_hex)
-        it = iter(cp.get(sha_hex))
-        type = it.next()
-
-        if type == 'commit':
-
-            content = "".join(it)
-            yield ('commit', sha_hex, len(content))
-            tree_sha = content.split("\n")[0][5:].rstrip(" ")
-
-            for obj in traverse_objects(cp, tree_sha, needed_objects, check_dup):
+        for (mode, mangled_name, sha) in git.tree_decode(content):
+            for obj in traverse_objects(cp, needed_objects, check_dup,
+                                o_id, mode, mangled_name, sha.encode('hex')):
                 yield obj
 
-        if type == 'tree':
-            content = "".join(it)
-            sum = len(content)
-            for (mode,mangled_name,sha) in git.tree_decode(content):
-                try:
-                    db.execute('INSERT OR IGNORE INTO refs VALUES (?,?,?,?)',
-                        (sha_hex, sha.encode('hex'), mode, mangled_name))
-                except:
-                    # how should we handle unicode file name?
-                    db.execute('INSERT OR IGNORE INTO refs VALUES (?,?,?,?)',
-                        (sha_hex, sha.encode('hex'), mode, 'unicode_name'))
+    elif type == 'commit':
+        tree_sha = content.split("\n")[0][5:].rstrip(" ")
 
-                for (t,s,c,l) in traverse_objects(cp, sha.encode('hex'),
-                                                  needed_objects, check_dup):
-                    sum += c
-                    yield (t,s,c,l)
-            yield ('tree', sha_hex, sum, len(content))
-
-        elif type == 'blob':
-            content = "".join(it)
-            yield ('blob', sha_hex, len(content), len(content))
+        for obj in traverse_objects(cp, needed_objects, check_dup,
+                        o_id, r_mode, tree_sha):
+            yield obj
 
 
 def fill_database(show_progress):
@@ -134,9 +129,9 @@ def fill_database(show_progress):
         for date, sha_hex in ((date, sha.encode('hex')) for date, sha in
                               git.rev_list(refname)):
             log('Traversing commit %s to find needed objects...\n' % sha_hex)
-            for type, sha_, sum, size in traverse_commit(cp, sha_hex, needed_objects):
+            for type, sha_, size in traverse_commit(cp, needed_objects, sha_hex):
                 if show_progress and not type == 'blob':
-                    log("%s  %s  %12d  %5d\n" % (type, sha_, sum, size))
+                    log("%8s  %s  %5d\n" % (type, sha_, size))
                 traversed_objects_counter += 1
                 qprogress('Traversing objects: %d\r' % traversed_objects_counter)
 
@@ -145,9 +140,9 @@ def fill_database(show_progress):
     if len(tags) > 0:
         for key in tags:
             log('Traversing tag %s to find needed objects...\n' % ", ".join(tags[key]))
-            for type, sha, sum, size in traverse_commit(cp, sha, needed_objects):
+            for type, sha, size in traverse_commit(cp, needed_objects, sha):
                 if not type == 'blob':
-                    log("%s  %s  %12d  %5d\n" % (type, sha_, sum, size))
+                    log("%8s  %s  %5d\n" % (type, sha_, size))
                 traversed_objects_counter += 1
                 qprogress('Traversing objects: %d\r' % traversed_objects_counter)
 
@@ -160,24 +155,27 @@ def fill_database(show_progress):
 
 
 def _show_blobs(db, hash, ofs, depth):
-    #print("# %12d %s" % (ofs, hash))
+    c = db.cursor()
+    c.execute('SELECT id FROM objects WHERE sha=:h', {"h": hash})
+    row = c.fetchone()
+
+    if row == None:
+        o.fatal('Unknown hash (%s)' % hash)
+
     cur = db.cursor()
-    #db.execute('CREATE TABLE objects (sha text, type text, size integer);')
-    #db.execute('CREATE TABLE refs (a text, b text);')
-    cur.execute('select o.sha, o.type, o.size, r.name, r.mode from objects o join refs r where r.a=:h and r.b=o.sha',
-                {"h": hash})
+    cur.execute('SELECT o.sha, o.type, o.size, r.name FROM refs r JOIN objects o WHERE r.r_id=:h AND r.o_id=o.id',
+                {"h": row[0]})
     total = ofs
-    for sha, type, size, name, mode in cur.fetchall():
-        #print("# %s %s %X %12d %s" % (sha, type, mode, size, name))
-        if type == 'tree':
+    for sha, type, size, name in cur.fetchall():
+        if type == 'blob':
+            total += size
+            yield (total, sha, size, ofs, type, depth)
+            ofs += size
+        elif type == 'tree':
             yield (total, sha, size, ofs, type, depth)
             for total1, sha1, size1, ofs1, type1, depth1 in _show_blobs(db, sha, total, depth+1):
                 total = total1
                 yield (total, sha1, size1, ofs1, type1, depth1)
-        elif type == 'blob':
-            total += size
-            yield (total, sha, size, ofs, type, depth)
-            ofs += size
 
 
 def show_blobs(hash):
@@ -240,7 +238,7 @@ def add_objects(hash):
     # Find needed objects reachable from hash
     traversed_objects_counter = 0
 
-    for type, sha_, sum, size in traverse_hash(cp, hash, needed_objects):
+    for type, sha_, size in traverse_hash(cp, hash, needed_objects):
         if not type == 'blob':
             log("%s  %s  %12d  %5d\n" % (type, sha_, sum, size))
         traversed_objects_counter += 1
