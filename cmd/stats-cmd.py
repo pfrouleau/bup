@@ -4,7 +4,9 @@ from bup import git, options
 from bup.helpers import *
 
 git.check_repo_or_die()
+cp = None
 db = None
+needed_objects = None
 
 SKIP_KNOWN = True
 
@@ -34,18 +36,23 @@ def open_database(reset, must_exist):
 
 # Out: object's id, new_flag
 def insert_object(sha, type, size):
+    global db
+
     cur = db.cursor()
     cur.execute('INSERT OR IGNORE INTO objects VALUES (null,?,?,?)', (sha, type, size))
 
     if cur.rowcount == 1:
        return cur.lastrowid, 1
     else:
+        log('# present (%s)\n' % sha)
         cur = db.cursor()
         cur.execute('SELECT id FROM objects WHERE sha=:sha', {"sha": sha})
         return cur.fetchone()[0], 0
 
 
 def insert_ref(r_id, o_id, mode, name):
+    global db
+
     if r_id:
         try:
             db.execute('INSERT OR IGNORE INTO refs VALUES (?,?,?,?)',
@@ -57,7 +64,7 @@ def insert_ref(r_id, o_id, mode, name):
 
 
 # yield: type, sha, length
-def traverse_commit(cp, needed_objects, sha_hex):
+def traverse_commit(sha_hex):
 
     it = iter(cp.get(sha_hex))
     type = it.next()
@@ -71,19 +78,19 @@ def traverse_commit(cp, needed_objects, sha_hex):
         tree_sha = content.split("\n")[0][5:].rstrip(" ")
 
         yield (type, sha_hex, length)
-        for obj in traverse_objects(cp, needed_objects, False,
+        for obj in traverse_objects(False,
                             o_id, 0, 'commit', tree_sha):
             yield obj
 
 
 # yield: type, sha, length
-def traverse_hash(cp, needed_objects, sha_hex):
-    for obj in traverse_objects(cp, needed_objects, True, 0, 0, '-', sha_hex):
+def traverse_hash(sha_hex):
+    for obj in traverse_objects(True, 0, 0, '-', sha_hex):
         yield obj
 
 
 # yield: type, sha, length
-def traverse_objects(cp, needed_objects, check_dup, r_id, r_mode, r_name, sha_hex):
+def traverse_objects(check_dup, r_id, r_mode, r_name, sha_hex):
     it = iter(cp.get(sha_hex))
     type = it.next()
 
@@ -100,20 +107,19 @@ def traverse_objects(cp, needed_objects, check_dup, r_id, r_mode, r_name, sha_he
 
         elif type == 'tree':
             for (mode, mangled_name, sha) in git.tree_decode(content):
-                for obj in traverse_objects(cp, needed_objects, check_dup,
+                for obj in traverse_objects(check_dup,
                                     o_id, mode, mangled_name, sha.encode('hex')):
                     yield obj
 
         elif type == 'commit':
             tree_sha = content.split("\n")[0][5:].rstrip(" ")
 
-            for obj in traverse_objects(cp, needed_objects, check_dup,
-                            o_id, r_mode, tree_sha):
+            for obj in traverse_objects(check_dup, o_id, r_mode, tree_sha):
                 yield obj
 
 
 def fill_database(show_progress):
-    global db
+    global cp, db, needed_objects
 
     cp = git.CatPipe()
 
@@ -135,7 +141,7 @@ def fill_database(show_progress):
         for date, sha_hex in ((date, sha.encode('hex')) for date, sha in
                               git.rev_list(refname)):
             log('Traversing commit %s to find needed objects...\n' % sha_hex)
-            for type, sha_, size in traverse_commit(cp, needed_objects, sha_hex):
+            for type, sha_, size in traverse_commit(sha_hex):
                 if show_progress and not type == 'blob':
                     log("%8s  %s  %5d\n" % (type, sha_, size))
                 traversed_objects_counter += 1
@@ -146,7 +152,7 @@ def fill_database(show_progress):
     if len(tags) > 0:
         for key in tags:
             log('Traversing tag %s to find needed objects...\n' % ", ".join(tags[key]))
-            for type, sha, size in traverse_commit(cp, needed_objects, sha):
+            for type, sha, size in traverse_commit(sha):
                 if not type == 'blob':
                     log("%8s  %s  %5d\n" % (type, sha_, size))
                 traversed_objects_counter += 1
@@ -160,7 +166,9 @@ def fill_database(show_progress):
     db.commit()
 
 
-def _show_blobs(db, hash, ofs, depth):
+def _show_blobs(hash, ofs, depth):
+    global db
+
     c = db.cursor()
     c.execute('SELECT id FROM objects WHERE sha=:h', {"h": hash})
     row = c.fetchone()
@@ -179,18 +187,20 @@ def _show_blobs(db, hash, ofs, depth):
             ofs += size
         elif type == 'tree':
             yield (total, sha, size, ofs, type, depth)
-            for total1, sha1, size1, ofs1, type1, depth1 in _show_blobs(db, sha, total, depth+1):
+            for total1, sha1, size1, ofs1, type1, depth1 in _show_blobs(sha, total, depth+1):
                 total = total1
                 yield (total, sha1, size1, ofs1, type1, depth1)
 
 
 def show_blobs(hash):
+    global db
+
     log("# hash=%s\n" % hash)
     log("#\n")
     db = open_database(False, True)
     t = 0
     min = 32768+1
-    for total, sha, size, ofs, type, depth in _show_blobs(db, hash, t, 0):
+    for total, sha, size, ofs, type, depth in _show_blobs(hash, t, 0):
         print("%12d %12d %s  %s %d" % (size, ofs, sha, type, depth))
         t = total
         if (min > size and size > 0 and type == 'blob'): min = size;
@@ -199,15 +209,23 @@ def show_blobs(hash):
     print("# min   = %d" % min)
 
 
-def show_parent(hash):
+def show_parent(sha):
     global db
 
     db = open_database(False, True)
 
-    cur = db.cursor()
-    cur.execute('SELECT DISTINCT a FROM refs WHERE refs.b=:b ', {"b": hash})
+    c = db.cursor()
+    c.execute('SELECT id FROM objects WHERE sha=:h', {"h": sha})
+    row = c.fetchone()
 
-    print "Parent of %s" % hash
+    if row == None:
+        o.fatal('Unknown hash (%s)' % hash)
+
+    cur = db.cursor()
+    cur.execute('SELECT DISTINCT o.sha FROM refs r JOIN objects o WHERE r.o_id=:k AND r.r_id=o.id',
+                {"k": row[0]})
+
+    print "Parent of %s" % sha
     print cur.fetchall()
 
 
@@ -217,15 +235,15 @@ def show_tree_size():
     db = open_database(False, True)
 
     cur = db.cursor()
-    cur.execute('SELECT a, count(b) as c FROM refs group by a order by c')
+    cur.execute('SELECT o.sha, count(r.o_id) as c FROM refs r JOIN objects o WHERE r.r_id = o.id GROUP BY r.r_id ORDER BY c')
 
     print "Tree sizes:"
     for hash, n in cur.fetchall():
         print("%s %d" % (hash,n))
 
 
-def add_objects(hash):
-    global db
+def add_objects(sha):
+    global cp, db, needed_objects
 
     cp = git.CatPipe()
 
@@ -235,7 +253,7 @@ def add_objects(hash):
     db = open_database(False, False)
 
     cur = db.cursor()
-    cur.execute('SELECT 1 FROM objects WHERE sha=:sha', {"sha": hash})
+    cur.execute('SELECT 1 FROM objects WHERE sha=:sha', {"sha": sha})
     if cur.fetchone():
         create_indexes(db)
         log('# %s is already in the database\n' % hash)
@@ -244,7 +262,7 @@ def add_objects(hash):
     # Find needed objects reachable from hash
     traversed_objects_counter = 0
 
-    for type, sha_, size in traverse_hash(cp, hash, needed_objects):
+    for type, sha_, size in traverse_hash(hash):
         if not type == 'blob':
             log("%s  %s  %12d  %5d\n" % (type, sha_, sum, size))
         traversed_objects_counter += 1
