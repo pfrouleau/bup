@@ -179,17 +179,15 @@ def _show_blobs(hash, ofs, depth):
     cur = db.cursor()
     cur.execute('SELECT o.sha, o.type, o.size, r.name FROM refs r JOIN objects o WHERE r.r_id=:h AND r.o_id=o.id',
                 {"h": row[0]})
-    total = ofs
     for sha, type, size, name in cur.fetchall():
         if type == 'blob':
-            total += size
-            yield (total, sha, size, ofs, type, depth)
+            yield (ofs+size, sha, size, ofs, type, depth)
             ofs += size
         elif type == 'tree':
-            yield (total, sha, size, ofs, type, depth)
-            for total1, sha1, size1, ofs1, type1, depth1 in _show_blobs(sha, total, depth+1):
-                total = total1
-                yield (total, sha1, size1, ofs1, type1, depth1)
+            yield (ofs, sha, size, ofs, type, depth)
+            for total1, sha1, size1, ofs1, type1, depth1 in _show_blobs(sha, ofs, depth+1):
+                ofs+=size1
+                yield (ofs, sha1, size1, ofs1, type1, depth1)
 
 
 def show_blobs(hash):
@@ -201,12 +199,12 @@ def show_blobs(hash):
     t = 0
     min = 32768+1
     for total, sha, size, ofs, type, depth in _show_blobs(hash, t, 0):
-        print("%12d %12d %s  %s %d" % (size, ofs, sha, type, depth))
+        print("%s  %12d %12d %6s %d" % (sha, ofs, size, type, depth))
         t = total
         if (min > size and size > 0 and type == 'blob'): min = size;
-    print("#------------------------")
-    print("# Total =    %12d" % t)
-    print("# min   = %d" % min)
+    print("#-----------------------------------------------------")
+    print("#                                 Total = %12d" % t)
+    print("#                                  min  = %d" % min)
 
 
 def show_parent(sha):
