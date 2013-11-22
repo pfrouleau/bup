@@ -32,13 +32,17 @@ def open_database(reset, must_exist):
 
     return db
 
-# Out: object's id
+# Out: object's id, new_flag
 def insert_object(sha, type, size):
-    db.execute('INSERT OR IGNORE INTO objects VALUES (null,?,?,?)', (sha, type, size))
-
     cur = db.cursor()
-    cur.execute('SELECT id FROM objects WHERE sha=:sha', {"sha": sha})
-    return cur.fetchone()[0]
+    cur.execute('INSERT OR IGNORE INTO objects VALUES (null,?,?,?)', (sha, type, size))
+
+    if cur.rowcount == 1:
+       return cur.lastrowid, 1
+    else:
+        cur = db.cursor()
+        cur.execute('SELECT id FROM objects WHERE sha=:sha', {"sha": sha})
+        return cur.fetchone()[0], 0
 
 
 def insert_ref(r_id, o_id, mode, name):
@@ -61,14 +65,15 @@ def traverse_commit(cp, needed_objects, sha_hex):
     content = "".join(it)
     length = len(content)
 
-    o_id = insert_object(sha_hex, type, length)
+    o_id, new = insert_object(sha_hex, type, length)
 
-    tree_sha = content.split("\n")[0][5:].rstrip(" ")
+    if new:
+        tree_sha = content.split("\n")[0][5:].rstrip(" ")
 
-    yield (type, sha_hex, length)
-    for obj in traverse_objects(cp, needed_objects, False,
-                        o_id, 0, 'commit', tree_sha):
-        yield obj
+        yield (type, sha_hex, length)
+        for obj in traverse_objects(cp, needed_objects, False,
+                            o_id, 0, 'commit', tree_sha):
+            yield obj
 
 
 # yield: type, sha, length
@@ -84,26 +89,27 @@ def traverse_objects(cp, needed_objects, check_dup, r_id, r_mode, r_name, sha_he
 
     content = "".join(it)
     length = len(content)
-    o_id = insert_object(sha_hex, type, length)
+    o_id, new = insert_object(sha_hex, type, length)
     insert_ref(r_id, o_id, r_mode, r_name)
 
     yield (type, sha_hex, length)
 
-    if type == 'blob':
-        return
+    if new:
+        if type == 'blob':
+            return
 
-    elif type == 'tree':
-        for (mode, mangled_name, sha) in git.tree_decode(content):
+        elif type == 'tree':
+            for (mode, mangled_name, sha) in git.tree_decode(content):
+                for obj in traverse_objects(cp, needed_objects, check_dup,
+                                    o_id, mode, mangled_name, sha.encode('hex')):
+                    yield obj
+
+        elif type == 'commit':
+            tree_sha = content.split("\n")[0][5:].rstrip(" ")
+
             for obj in traverse_objects(cp, needed_objects, check_dup,
-                                o_id, mode, mangled_name, sha.encode('hex')):
+                            o_id, r_mode, tree_sha):
                 yield obj
-
-    elif type == 'commit':
-        tree_sha = content.split("\n")[0][5:].rstrip(" ")
-
-        for obj in traverse_objects(cp, needed_objects, check_dup,
-                        o_id, r_mode, tree_sha):
-            yield obj
 
 
 def fill_database(show_progress):
