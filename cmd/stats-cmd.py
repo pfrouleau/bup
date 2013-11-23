@@ -199,28 +199,36 @@ def show_blobs(hash):
     if id is None:
         o.fatal('hash not found (%s)' % hash)
 
+    pl = git.PackIdxList(git.repo('objects/pack'))
+    known_objects = git.NeededObjects(pl)
+
     blob_min = 32768+1
-    blob_size  = tree_size  = 0
-    blob_count = tree_count = 0
+    bs_tot = bs_dedup = b_count = 0
+    ts_dedup = t_count = 0
 
     print("# hash=%s" % hash)
     print("#")
     for sha, size, ofs, type, depth in _show_blobs(hash, 0, 0):
-        if type == 'blob':
-            blob_size  += size
-            blob_count += 1
-            if (blob_min > size and size > 0): blob_min = size;
-        else:
-            tree_size  += size
-            tree_count += 1
         print("%s  %12d %6s %5d %2d" % (sha, ofs, type, size, depth))
+        if type == 'blob':
+            bs_tot += size
+        if sha not in known_objects:
+            known_objects.add(sha)
+            if type == 'blob':
+                bs_dedup += size
+                b_count  += 1
+                if (blob_min > size and size > 0): blob_min = size;
+            else:
+                ts_dedup += size
+                t_count  += 1
 
     print("#---------------------------------------------------------------------")
-    print("# Blobs: Count = %8d        Total =  %12d   min = %4d" % (blob_count, blob_size, blob_min))
-    print("#                                  Avg =      %12.3f" % (blob_size/blob_count))
+    print("# Blobs:                         Total =  %12d   min = %4d" % (bs_tot, blob_min))
+    print("#                                Dedup =  %12d  diff = %4d" % (bs_dedup, bs_tot-bs_dedup))
+    print("#        Count = %8d          Avg =      %12.3f" % (b_count, bs_dedup/b_count))
     print("#.....................................................................")
-    print("# Trees: Count = %8d  Total = %12d" % (tree_count, tree_size))
-    print("#                            Avg =     %12.3f" % (tree_size/tree_count))
+    print("# Trees:                         Dedup =  %12d" % (ts_dedup))
+    print("#        Count = %8d          Avg =      %12.3f" % (t_count, ts_dedup/t_count))
 
 
 def show_parent(sha):
