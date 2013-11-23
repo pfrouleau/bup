@@ -180,13 +180,14 @@ def _show_blobs(hash, ofs, depth):
                 {"h": id})
     for sha, type, size, name in cur.fetchall():
         if type == 'blob':
-            yield (ofs+size, sha, size, ofs, type, depth)
+            yield (sha, size, ofs, type, depth)
             ofs += size
         elif type == 'tree':
-            yield (ofs, sha, size, ofs, type, depth)
-            for total1, sha1, size1, ofs1, type1, depth1 in _show_blobs(sha, ofs, depth+1):
-                ofs+=size1
-                yield (ofs, sha1, size1, ofs1, type1, depth1)
+            yield (sha, size, ofs, type, depth)
+            for sha1, size1, ofs1, type1, depth1 in _show_blobs(sha, ofs, depth+1):
+                if type1 == 'blob':
+                    ofs += size1
+                yield (sha1, size1, ofs1, type1, depth1)
 
 
 def show_blobs(hash):
@@ -197,15 +198,23 @@ def show_blobs(hash):
     id = get_object_id(hash)
     if id is None:
         o.fatal('hash not found (%s)' % hash)
-    t = 0
-    min = 32768+1
-    for total, sha, size, ofs, type, depth in _show_blobs(hash, t, 0):
-        print("%s  %12d %12d %6s %d" % (sha, ofs, size, type, depth))
-        t = total
-        if (min > size and size > 0 and type == 'blob'): min = size;
-    print("#-----------------------------------------------------")
-    print("#                                 Total = %12d" % t)
-    print("#                                  min  = %d" % min)
+
+    blob_min = 32768+1
+    blob_size = tree_size = 0
+
+    print("# hash=%s" % hash)
+    print("#")
+    for sha, size, ofs, type, depth in _show_blobs(hash, 0, 0):
+        if type == 'blob':
+            blob_size += size
+            if (blob_min > size and size > 0): blob_min = size;
+        else:
+            tree_size += size
+        print("%s  %12d %6s %5d %2d" % (sha, ofs, type, size, depth))
+
+    print("#--------------------------------------------------------------------")
+    print("#                                Total =  %12d   min = %4d" % (blob_size, blob_min))
+    print("# Tree size = %d" % tree_size)
 
 
 def show_parent(sha):
