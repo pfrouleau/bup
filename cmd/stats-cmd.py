@@ -50,8 +50,6 @@ def insert_object(sha, type, size):
 
 
 def insert_ref(r_id, o_id, mode, name):
-    global db
-
     if r_id:
         try:
             db.execute('INSERT OR IGNORE INTO refs VALUES (?,?,?,?)',
@@ -163,8 +161,6 @@ def fill_database(show_progress):
 
 
 def _show_blobs(hash, ofs, depth):
-    global db
-
     c = db.cursor()
     c.execute('SELECT id FROM objects WHERE sha=:h', {"h": hash})
     row = c.fetchone()
