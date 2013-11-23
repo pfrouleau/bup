@@ -6,7 +6,6 @@ from bup.helpers import *
 git.check_repo_or_die()
 cp = None
 db = None
-needed_objects = None
 
 SKIP_KNOWN = True
 
@@ -119,12 +118,9 @@ def traverse_objects(check_dup, r_id, r_mode, r_name, sha_hex):
 
 
 def fill_database(show_progress):
-    global cp, db, needed_objects
+    global cp, db
 
     cp = git.CatPipe()
-
-    pl = git.PackIdxList(git.repo('objects/pack'))
-    needed_objects = git.NeededObjects(pl)
 
     refs = git.list_refs()
     refnames = [name for name, sha in refs]
@@ -241,12 +237,9 @@ def show_tree_size():
 
 
 def add_objects(sha):
-    global cp, db, needed_objects
+    global cp, db
 
     cp = git.CatPipe()
-
-    pl = git.PackIdxList(git.repo('objects/pack'))
-    needed_objects = git.NeededObjects(pl)
 
     db = open_database(False, False)
 
