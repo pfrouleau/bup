@@ -200,21 +200,27 @@ def show_blobs(hash):
         o.fatal('hash not found (%s)' % hash)
 
     blob_min = 32768+1
-    blob_size = tree_size = 0
+    blob_size  = tree_size  = 0
+    blob_count = tree_count = 0
 
     print("# hash=%s" % hash)
     print("#")
     for sha, size, ofs, type, depth in _show_blobs(hash, 0, 0):
         if type == 'blob':
-            blob_size += size
+            blob_size  += size
+            blob_count += 1
             if (blob_min > size and size > 0): blob_min = size;
         else:
-            tree_size += size
+            tree_size  += size
+            tree_count += 1
         print("%s  %12d %6s %5d %2d" % (sha, ofs, type, size, depth))
 
-    print("#--------------------------------------------------------------------")
-    print("#                                Total =  %12d   min = %4d" % (blob_size, blob_min))
-    print("# Tree size = %d" % tree_size)
+    print("#---------------------------------------------------------------------")
+    print("# Blobs: Count = %8d        Total =  %12d   min = %4d" % (blob_count, blob_size, blob_min))
+    print("#                                  Avg =      %12.3f" % (blob_size/blob_count))
+    print("#.....................................................................")
+    print("# Trees: Count = %8d  Total = %12d" % (tree_count, tree_size))
+    print("#                            Avg =     %12.3f" % (tree_size/tree_count))
 
 
 def show_parent(sha):
