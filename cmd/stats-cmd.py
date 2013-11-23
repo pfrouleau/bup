@@ -148,10 +148,10 @@ def fill_database(show_progress):
                               git.rev_list(refname)):
             log('Traversing commit %s to find needed objects...\n' % sha_hex)
             for type, sha_, size in traverse_commit(sha_hex):
+                traversed_objects_counter += 1
                 if show_progress and not type == 'blob':
                     log("%8s  %s  %5d\n" % (type, sha_, size))
-                traversed_objects_counter += 1
-                qprogress('Traversing objects: %d\r' % traversed_objects_counter)
+                    qprogress('Traversing objects: %d\r' % traversed_objects_counter)
 
     # Find needed objects reachable from tags
     tags = git.tags()
@@ -159,10 +159,10 @@ def fill_database(show_progress):
         for key in tags:
             log('Traversing tag %s to find needed objects...\n' % ", ".join(tags[key]))
             for type, sha, size in traverse_commit(sha):
-                if not type == 'blob':
-                    log("%8s  %s  %5d\n" % (type, sha_, size))
                 traversed_objects_counter += 1
-                qprogress('Traversing objects: %d\r' % traversed_objects_counter)
+                if show_progress and not type == 'blob':
+                    log("%8s  %s  %5d\n" % (type, sha_, size))
+                    qprogress('Traversing objects: %d\r' % traversed_objects_counter)
 
     progress('Traversing objects: %d, done.\n' % traversed_objects_counter)
     if traversed_objects_counter == 0:
