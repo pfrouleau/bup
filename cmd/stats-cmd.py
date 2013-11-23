@@ -96,31 +96,35 @@ def traverse_hash(sha_hex):
 
 # yield: type, sha, length
 def traverse_objects(check_dup, r_id, r_mode, r_name, sha_hex):
+    o_id = get_object_id(sha_hex)
+    if not o_id is None:
+        insert_ref(r_id, o_id, r_mode, r_name)
+        return
+
     it = iter(cp.get(sha_hex))
     type = it.next()
-
     content = "".join(it)
     length = len(content)
+
     o_id, new = insert_object(sha_hex, type, length)
     insert_ref(r_id, o_id, r_mode, r_name)
 
     yield (type, sha_hex, length)
 
-    if new:
-        if type == 'blob':
-            return
+    if type == 'blob':
+        return
 
-        elif type == 'tree':
-            for (mode, mangled_name, sha) in git.tree_decode(content):
-                for obj in traverse_objects(check_dup,
-                                    o_id, mode, mangled_name, sha.encode('hex')):
-                    yield obj
-
-        elif type == 'commit':
-            tree_sha = content.split("\n")[0][5:].rstrip(" ")
-
-            for obj in traverse_objects(check_dup, o_id, r_mode, tree_sha):
+    elif type == 'tree':
+        for (mode, mangled_name, sha) in git.tree_decode(content):
+            for obj in traverse_objects(check_dup,
+                            o_id, mode, mangled_name, sha.encode('hex')):
                 yield obj
+
+    elif type == 'commit':
+        tree_sha = content.split("\n")[0][5:].rstrip(" ")
+
+        for obj in traverse_objects(check_dup, o_id, r_mode, tree_sha):
+            yield obj
 
 
 def fill_database(show_progress):
