@@ -33,20 +33,28 @@ def open_database(reset, must_exist):
 
     return db
 
-# Out: object's id, new_flag
-def insert_object(sha, type, size):
-    global db
 
+def get_object_id(sha):
+    cur = db.cursor()
+    cur.execute('SELECT id FROM objects WHERE sha=:h', {"h": sha})
+    row = cur.fetchone()
+
+    if row == None:
+        return None
+
+    return row[0]
+
+
+# Out: object's id, is_new
+def insert_object(sha, type, size):
     cur = db.cursor()
     cur.execute('INSERT OR IGNORE INTO objects VALUES (null,?,?,?)', (sha, type, size))
 
     if cur.rowcount == 1:
-       return cur.lastrowid, 1
+       return cur.lastrowid, True
     else:
         log('# present (%s)\n' % sha)
-        cur = db.cursor()
-        cur.execute('SELECT id FROM objects WHERE sha=:sha', {"sha": sha})
-        return cur.fetchone()[0], 0
+        return get_object_id(sha), False
 
 
 def insert_ref(r_id, o_id, mode, name):
@@ -161,16 +169,11 @@ def fill_database(show_progress):
 
 
 def _show_blobs(hash, ofs, depth):
-    c = db.cursor()
-    c.execute('SELECT id FROM objects WHERE sha=:h', {"h": hash})
-    row = c.fetchone()
-
-    if row == None:
-        o.fatal('Unknown hash (%s)' % hash)
+    id = get_object_id(hash)
 
     cur = db.cursor()
     cur.execute('SELECT o.sha, o.type, o.size, r.name FROM refs r JOIN objects o WHERE r.r_id=:h AND r.o_id=o.id',
-                {"h": row[0]})
+                {"h": id})
     for sha, type, size, name in cur.fetchall():
         if type == 'blob':
             yield (ofs+size, sha, size, ofs, type, depth)
@@ -185,9 +188,11 @@ def _show_blobs(hash, ofs, depth):
 def show_blobs(hash):
     global db
 
-    log("# hash=%s\n" % hash)
-    log("#\n")
     db = open_database(False, True)
+
+    id = get_object_id(hash)
+    if id is None:
+        o.fatal('hash not found (%s)' % hash)
     t = 0
     min = 32768+1
     for total, sha, size, ofs, type, depth in _show_blobs(hash, t, 0):
@@ -204,16 +209,13 @@ def show_parent(sha):
 
     db = open_database(False, True)
 
-    c = db.cursor()
-    c.execute('SELECT id FROM objects WHERE sha=:h', {"h": sha})
-    row = c.fetchone()
-
-    if row == None:
+    id = get_object_id(sha)
+    if id is None:
         o.fatal('Unknown hash (%s)' % hash)
 
     cur = db.cursor()
     cur.execute('SELECT DISTINCT o.sha FROM refs r JOIN objects o WHERE r.o_id=:k AND r.r_id=o.id',
-                {"k": row[0]})
+                {"k": id})
 
     print "Parent of %s" % sha
     print cur.fetchall()
@@ -239,9 +241,8 @@ def add_objects(sha):
 
     db = open_database(False, False)
 
-    cur = db.cursor()
-    cur.execute('SELECT 1 FROM objects WHERE sha=:sha', {"sha": sha})
-    if cur.fetchone():
+    id = get_object_id(sha)
+    if id:
         create_indexes(db)
         log('# %s is already in the database\n' % hash)
         return
