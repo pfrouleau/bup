@@ -401,10 +401,14 @@ class PackIdxList:
             if not skip_midx:
                 midxl = []
                 for ix in self.packs:
+                    debug1('# PackIdxList: ix=%s\n' % ix.name)
                     if isinstance(ix, midx.PackMidx):
                         for name in ix.idxnames:
+                            debug1('# PackIdxList: idxname=%s\n' % name)
                             d[os.path.join(self.dir, name)] = ix
+                debug1('# PackIdxList: midx...\n')
                 for full in glob.glob(os.path.join(self.dir,'*.midx')):
+                    debug1('# PackIdxList: full=%s\n' % full)
                     if not d.get(full):
                         mx = midx.PackMidx(full)
                         (mxd, mxf) = os.path.split(mx.name)
@@ -418,26 +422,33 @@ class PackIdxList:
                             del mx
                             unlink(full)
                         else:
+                            debug1('# PackIdxList: add mx=%s\n' % mx.name)
                             midxl.append(mx)
                 midxl.sort(key=lambda ix:
                            (-len(ix), -xstat.stat(ix.name).st_mtime))
+                debug1('# PackIdxList: midxl...\n')
                 for ix in midxl:
                     any_needed = False
                     for sub in ix.idxnames:
+                        debug1('# PackIdxList: sub=%s\n' % sub)
                         found = d.get(os.path.join(self.dir, sub))
                         if not found or isinstance(found, PackIdx):
                             # doesn't exist, or exists but not in a midx
                             any_needed = True
                             break
                     if any_needed:
+                        debug1('# PackIdxList: any_needed\n')
                         d[ix.name] = ix
                         for name in ix.idxnames:
+                            debug1('# PackIdxList: name=%s\n' % name)
                             d[os.path.join(self.dir, name)] = ix
                     elif not ix.force_keep:
                         debug1('midx: removing redundant: %s\n'
                                % os.path.basename(ix.name))
                         unlink(ix.name)
+            debug1('# PackIdxList: idx...\n')
             for full in glob.glob(os.path.join(self.dir,'*.idx')):
+                debug1('#')
                 if not d.get(full):
                     try:
                         ix = open_idx(full)
@@ -445,6 +456,8 @@ class PackIdxList:
                         add_error(e)
                         continue
                     d[full] = ix
+                    debug1('# PackIdxList: add idx=%s\n' % full)
+
             bfull = os.path.join(self.dir, 'bup.bloom')
             if self.bloom is None and os.path.exists(bfull):
                 self.bloom = bloom.ShaBloom(bfull)
@@ -1119,6 +1132,8 @@ class NeededObjects():
     def __init__(self, pack_idx_list):
         self.packs = [pack for pack in pack_idx_list.packs
                                if isinstance(pack, PackIdx)]
+        for p in self.packs:
+            debug1('# NeededObjects: %s\n' % p.name)
         self.pack_bitarrays = dict()
         for pack in self.packs:
             self.pack_bitarrays[pack.name] = BitArray(len(pack))

@@ -9,12 +9,12 @@ db = None
 
 SKIP_KNOWN = True
 
-def create_indexes(db):
+def create_indexes():
     log("Creating indexes...")
     # db.execute("create index if not exists idx_obj_sha on objects(sha)")
     # db.execute("create index if not exists idx_obj_type on objects(type)")
-    # db.execute("create index if not exists idx_refs on refs(a, name)")
-    # log(" DONE\n")
+    db.execute("create index if not exists idx_refs on refs(o_id)")
+    log(" DONE\n")
 
 
 def open_database(reset, must_exist):
@@ -168,7 +168,7 @@ def fill_database(show_progress):
     if traversed_objects_counter == 0:
         o.fatal('No reachable objects found.')
 
-    create_indexes(db)
+    create_indexes()
     db.commit()
 
 
@@ -190,10 +190,11 @@ def _show_blobs(hash, ofs, depth):
                 yield (sha1, size1, ofs1, type1, depth1)
 
 
-def show_blobs(hash):
+def show_blobs(hash, show_details):
     global db
 
     db = open_database(False, True)
+    create_indexes()
 
     id = get_object_id(hash)
     if id is None:
@@ -209,11 +210,12 @@ def show_blobs(hash):
     print("# hash=%s" % hash)
     print("#")
     for sha, size, ofs, type, depth in _show_blobs(hash, 0, 0):
-        print("%s  %12d %6s %5d %2d" % (sha, ofs, type, size, depth))
         if type == 'blob':
             bs_tot += size
+        k = ""
         if sha not in known_objects:
             known_objects.add(sha)
+            k = " +"
             if type == 'blob':
                 bs_dedup += size
                 b_count  += 1
@@ -221,6 +223,8 @@ def show_blobs(hash):
             else:
                 ts_dedup += size
                 t_count  += 1
+        if show_details:
+            print("%s  %12d %6s %5d %2d %s" % (sha, ofs, type, size, depth, k))
 
     print("#---------------------------------------------------------------------")
     print("# Blobs:                         Total =  %12d   min = %4d" % (bs_tot, blob_min))
@@ -252,6 +256,7 @@ def show_tree_size():
     global db
 
     db = open_database(False, True)
+    create_indexes()
 
     cur = db.cursor()
     cur.execute('SELECT o.sha, count(r.o_id) as c FROM refs r JOIN objects o WHERE r.r_id = o.id GROUP BY r.r_id ORDER BY c')
@@ -270,7 +275,7 @@ def add_objects(sha):
 
     id = get_object_id(sha)
     if id:
-        create_indexes(db)
+        create_indexes()
         log('# %s is already in the database\n' % hash)
         return
 
@@ -284,7 +289,7 @@ def add_objects(sha):
         qprogress('Traversing objects: %d\r' % traversed_objects_counter)
     progress('Traversing objects: %d, done.\n' % traversed_objects_counter)
 
-    create_indexes(db)
+    create_indexes()
     db.commit()
 
 
@@ -304,8 +309,11 @@ o = options.Options(optspec)
 handle_ctrl_c()
 opt.progress = (istty2 and not opt.quiet)
 
+# For now, ignore the midx to avoid a possible bug in NeededObject's logic.
+git.ignore_midx = 1
+
 if opt.show:
-    show_blobs(opt.show)
+    show_blobs(opt.show, opt.progress)
 elif opt.reset:
     fill_database(opt.progress)
 elif opt.parent:
