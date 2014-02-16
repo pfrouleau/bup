@@ -557,7 +557,8 @@ def _make_objcache():
 
 class PackWriter:
     """Writes Git objects inside a pack file."""
-    def __init__(self, objcache_maker=_make_objcache, compression_level=1):
+    def __init__(self, objcache_maker=_make_objcache,
+                 compression_level=1, optimistic=False):
         self.count = 0
         self.outbytes = 0
         self.filename = None
@@ -566,6 +567,9 @@ class PackWriter:
         self.objcache_maker = objcache_maker
         self.objcache = None
         self.compression_level = compression_level
+
+        self.optimistic = optimistic
+        self.blobsinflight = []
 
     def __del__(self):
         self.close()
@@ -634,23 +638,48 @@ class PackWriter:
         self._require_objcache()
         return self.objcache.exists(id, want_source=want_source)
 
+
     def maybe_write(self, type, content):
         """Write an object to the pack file if not present and return its id."""
+        existed = True
         sha = calc_hash(type, content)
         if not self.exists(sha):
+            existed = False
             self._write(sha, type, content)
             self._require_objcache()
             self.objcache.add(sha)
-        return sha
+        return sha, existed
 
     def new_blob(self, blob):
         """Create a blob object in the pack with the supplied content."""
-        return self.maybe_write('blob', blob)
+        if self.optimistic:
+            sha = calc_hash('blob', blob)
+            self.blobsinflight.append((sha, 'blob', blob))
+        else:
+            (sha, _) = self.maybe_write('blob', blob)
+
+        return sha
 
     def new_tree(self, shalist):
         """Create a tree object in the pack."""
         content = tree_encode(shalist)
-        return self.maybe_write('tree', content)
+        (sha, existed) = self.maybe_write('tree', content)
+
+        if not self.optimistic:
+            return sha
+
+        existing_children = set()
+        if existed:
+            for (_, _, child) in shalist:
+                existing_children.add(child)
+
+        for (_, (hash, type, content)) in enumerate(self.blobsinflight):
+            if hash not in existing_children:
+                self.maybe_write(type, content)
+
+        self.blobsinflight = []
+
+        return sha
 
     def _new_commit(self, tree, parent, author, adate, committer, cdate, msg):
         l = []
@@ -660,7 +689,8 @@ class PackWriter:
         if committer: l.append('committer %s %s' % (committer, _git_date(cdate)))
         l.append('')
         l.append(msg)
-        return self.maybe_write('commit', '\n'.join(l))
+        (sha, _) = self.maybe_write('commit', '\n'.join(l))
+        return sha
 
     def new_commit(self, parent, tree, date, msg):
         """Create a commit object in the pack."""
@@ -679,7 +709,14 @@ class PackWriter:
             f.close()
             os.unlink(self.filename + '.pack')
 
+    def _flush_inflight(self):
+        if len(self.blobsinflight) > 0:
+            for (_, (_, type, content)) in enumerate(self.blobsinflight):
+                self.maybe_write(type, content)
+
     def _end(self, run_midx=True):
+        self._flush_inflight()
+
         f = self.file
         if not f: return None
         self.file = None
@@ -713,6 +750,7 @@ class PackWriter:
         if run_midx:
             auto_midx(repo('objects/pack'))
         return nameprefix
+
 
     def close(self, run_midx=True):
         """Close the pack file and move it to its definitive path."""
@@ -758,7 +796,6 @@ class PackWriter:
             return namebase
         finally:
             idx_f.close()
-
 
 def _git_date(date):
     return '%d %s' % (date, utc_offset_str(date))

@@ -92,7 +92,8 @@ elif opt.remote or is_reverse:
 else:
     cli = None
     oldref = refname and git.read_ref(refname) or None
-    pack_writer = git.PackWriter(compression_level=opt.compress)
+    pack_writer = git.PackWriter(compression_level=opt.compress,
+                                 optimistic=True)
 
 if opt.git_ids:
     # the input is actually a series of git object ids that we should retrieve
