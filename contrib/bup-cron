@@ -1,0 +1,697 @@
+#! /usr/bin/python
+# -*- coding: utf-8
+"""Copyrights: Antoine Beaupré from http://src.anarc.at/scripts.git/"""
+
+"""
+simple wrapper around bup index and save designed to be ran in cron
+jobs, with support for filesystem snapshots, logging and configuration
+files.
+"""
+
+"""
+limitations
+ * assumes POSIX (so no Windows)
+ * should be unit tested, at this point it's grown too big
+ * no syslog support, because we would then need to use pipes to talk
+   to bup, which would bring "interesting" results, loose
+   interactivity (unless we use select(), which seems overkill), and
+   complicate everything
+ * see XXX below for more
+ * doesn't support remote hosts, because it assumes bup-index can
+   store files remotely
+
+features missing
+ * --test to run compare-tree after backup
+ * support for BTRFS, ZFS, etc
+"""
+
+import os
+import sys
+import subprocess
+import socket
+import argparse
+import re
+import stat
+import time
+import datetime
+import errno
+import traceback
+
+
+class ArgumentConfigParser(argparse.ArgumentParser):
+    configs = ['/etc/bup-cron.conf', '~/.bup-cron.conf']
+    epilog = """options can also be specified, without --, in %s. an
+    arbitrary configuration file may also be supplied on the
+    commandline with a @ prefix (e.g. @foo.conf).
+
+    at least path and repo need to be specified.
+"""
+    description = __doc__
+    pidfile = '.bup-cron.pid'
+
+    def __init__(self):
+        """various settings for the argument parser"""
+        argparse.ArgumentParser.__init__(self,
+                                         description=self.description,
+                                         epilog=self.epilog %
+                                         " or ".join(self.configs),
+                                         fromfile_prefix_chars='@')
+        self.add_argument('-v', '--verbose', action='count',
+                          help="""output more information on console.
+tries to be silent if not specified.
+-v implies explaining what we do,
+-vv shows output of commands,
+-vvv passes verbose to those commands""")
+        self.add_argument('-d', '--debug', action='store_true',
+                          help="""print debug backtrace on unhandled exceptions
+                                  - by default only the message is printed""")
+        # using the hostname as branch name
+        self.add_argument('-n', '--name', default=socket.gethostname(),
+                          help="""name of the backup passed to bup,
+                                  defaults to hostname (%(default)s)""")
+        self.add_argument('-l', '--logfile', default=sys.stdout, dest='log',
+                          type=SaferFileType(mode='a', bufsize=1),
+                          help="""file where logs should be written,
+                                  defaults to stdout""")
+        self.add_argument('--pidfile', default=None, action='store',
+                          help="""lockfile to write to avoid
+                                  simultanous execution, defaults to
+                                  $BUP_DIR/%s"""
+                          % self.pidfile)
+        self.add_argument('-s', '--snapshot', nargs='?', default='no',
+                          const='lvm', choices=['lvm', 'no'],
+                          help="""snapshot filesystem before backup.
+                                  this will automatically guess the
+                                  path to the logical volume, create a
+                                  snapshot, mount it, then remove it
+                                  when it is done, default: %(default)s""")
+        self.add_argument('-z', '--size', action='store',
+                          default=Snapshot.size,
+                          help="""size of the LVM snapshot,
+                                  defaults to %(default)s""")
+        self.add_argument('-m', '--mountpoint', action='store',
+                          default=Snapshot.mountpattern,
+                          help="""mountpoint of the snapshot device.
+                                  should contain two %%s patterns, for
+                                  the VG and LV names, default:
+                                  %(default)s)""")
+        self.add_argument('--clear', action='store_true',
+                          help="""redo a full backup
+                                  (runs bup index --clear before starting)""")
+        self.add_argument('-x', '--exclude', action='append',
+                          help="""exclude regex pattern,
+                                  will be passed as --exclude-rx to bup""")
+        self.add_argument('--parity', action='store_true',
+                          help="""generate recovery blocks after backup.
+                                  runs bup fsck -g after the backup,
+                                  requires par2(1).""")
+        if 'BUP_DIR' in os.environ:
+            defdir = os.environ['BUP_DIR']
+        else:
+            defdir = None
+        self.add_argument('-r', '--repository',
+                          required=('BUP_DIR' not in os.environ),
+                          default = defdir,
+                          help="""the directory to backup to, defaults
+                                  to $BUP_DIR (%s)"""
+                          % defdir)
+        # different list because dest=paths doesn't work, it gets
+        # overwritten by the next one
+        self.add_argument('-p', '--path', action='append',
+                          help="""add path to list of paths to backup,
+                                  mostly useful for the configuration file""")
+        self.add_argument('paths', nargs='*', help='list of paths to backup')
+
+    def convert_arg_line_to_args(self, arg_line):
+        """parse a config file"""
+        # skip whitespace and commented lines
+        if re.match('^(#|[\s]*$)', arg_line):
+            return []
+        else:
+            # all lines are assumed to be options
+            return ['--' + arg_line]
+
+    def parse_args(self):
+        """process argument list
+
+        inject system and user config files and cleanup various
+        arguments and defaults that couldn't be done otherwise"""
+        configs = map(lambda x: os.path.expanduser(x), self.configs)
+        for conf in configs:
+            try:
+                with open(conf, 'r'):
+                    sys.argv.insert(1, '@' + conf)
+            except IOError:
+                pass
+        args = argparse.ArgumentParser.parse_args(self)
+        # merge the path and paths arguments
+        if args.path:
+            args.paths += args.path
+        # remove this one to avoid ambiguity
+        del args.path
+        if len(args.paths) < 1:
+            self.error('argument paths is required')
+        os.environ['BUP_DIR'] = args.repository
+        # remove this one to avoid ambiguity
+        del args.repository
+        if args.pidfile is None:
+            args.pidfile = os.path.join(os.environ['BUP_DIR'], self.pidfile)
+        # turn args.snapshot into the relevant class
+        # sys.modules[__name__] is a hack because the snapshot classes
+        # are not in the load path
+        args.snapshot = getattr(sys.modules[__name__], args.snapshot.title()
+                                + 'Snapshot')
+        return args
+
+
+class SaferFileType(argparse.FileType):
+    """Factory for creating file object types
+
+    This replacement is necessary for two reasons:
+
+    * '-' and mode='a' conflict
+    * crashes if logfile cannot be opened, which breaks usage
+    """
+    def __call__(self, string):
+        """override parent to get the behavior we want"""
+        if string == '-' and 'a' in self._mode:
+            self._mode = self._mode.replace('a', 'w')
+        try:
+            return argparse.FileType.__call__(self, string)
+        except argparse.ArgumentTypeError as e:
+            sys.stderr.write(str(e) + "\n")
+            return sys.stdout
+
+
+class Snapshot():
+    """abstract class to handle filesystem snapshots"""
+
+    """default snapshot size"""
+    size = '1GB'
+
+    """default location the snapshot is mounted on"""
+    mountpattern = '/media/bup/%s-%s'
+
+    def __init__(self, path, size, log=sys.stdout.write, warn=sys.stderr.write,
+                 verbose=0, call=subprocess.check_call, mountpattern=None):
+        """initialise the snapshot array
+
+        path is expected to be the root of the filesystem log and warn
+        are logging utilities call is a way to call processes that
+        will return true on success or false otherwise"""
+        self.path = path
+        self.size = size
+        self.log = log
+        self.warn = warn
+        self.verbose = verbose
+        self.call = call
+        # if the snapshot has been created
+        self.exists = False
+        if mountpattern is not None:
+            self.mountpattern = mountpattern
+
+    def __enter__(self):
+        """this should be reimplemented by subclasses
+
+        this should:
+
+        1. create a snapshot
+        2. mount it in a specific location
+        3. set that location in self.path, or leave the original path
+        in place otherwise"""
+        return self
+
+    def __exit__(self, t, e, tb):
+        # return false to raise, true to pass
+        self.cleanup()
+        self.exists = False
+        return t is None
+
+    def cleanup(self):
+        """this function should undo all that __enter__() did"""
+        pass
+
+
+class NoSnapshot(Snapshot):
+    """special class to skip snapshotting
+
+    basically a noop"""
+    pass
+
+
+class LvmSnapshot(Snapshot):
+    def __enter__(self):
+        """set the LVM and mount it"""
+        self.vg_lv = None
+        if os.path.ismount(self.path):
+            device = self.find_device()
+            if device:
+                # vg, lv
+                self.vg_lv = LvmSnapshot.find_vg_lv(device)
+            if device and self.vg_lv:
+                # forced cleanup
+                self.cleanup(True)
+                cmd = ['lvcreate', '--size', self.size, '--snapshot',
+                       '--name', self.snapname(), device]
+                if self.verbose <= 0:
+                    cmd += ['--quiet']
+                if self.verbose >= 3:
+                    cmd += ['--verbose']
+                if self.call(cmd):
+                    try:
+                        os.chdir(self.mountpoint())
+                    except OSError:
+                        self.log('creating missing mountpoint %s'
+                                 % self.mountpoint())
+                        os.makedirs(self.mountpoint())
+                    self.exists = True
+                    if self.call(['mount', self.device(),
+                                  self.mountpoint()]):
+                        self.path = self.mountpoint()
+                    else:
+                        self.warn("""failed to mount snapshot %s on %s,
+skipping snapshotting"""
+                                  % (self.snapname(),
+                                     self.mountpoint()))
+                        self.cleanup()
+                else:
+                    self.warn("""failed to create snapshot %s/%s,
+skipping snapshooting"""
+                              % self.vg_lv)
+            else:
+                # XXX: we could try to find the parent mountpoint...
+                self.warn('%s is not a LVM mountpoint, skipping snapshotting'
+                          % self.path)
+        else:
+            self.warn('%s is not a mountpoint, skipping snapshotting'
+                      % self.path)
+        return self
+
+    def find_device(self):
+        """find device based on mountpoint path
+
+        returns the device or False if none found"""
+
+        mounts = subprocess.check_output(['mount'])
+        try:
+            return re.match(r".*^(/[^ ]*) on %s .*" % self.path, mounts,
+                            re.MULTILINE | re.DOTALL).group(1)
+        except:
+            return False
+
+    @staticmethod
+    def find_vg_lv(device):
+        """find the volume group and logical volume of the specified device"""
+        try:
+            lvs = subprocess.check_output(['lvs', device], close_fds=True)
+        except subprocess.CalledProcessError:
+            # not a LVM
+            return False
+        # second line of output, second and third fields, backwards
+        return tuple(re.split(r' +', re.split("\n", lvs)[1])[2:0:-1])
+
+    def snapname(self):
+        """the name of the snapshot volume to be created
+
+        pattern should have two string wildcards, one for vg, the
+        other for lv"""
+        return 'snap%s' % self.vg_lv[1]
+
+    def mountpoint(self):
+        """where to mount the snapshot device"""
+        return self.mountpattern % self.vg_lv
+
+    def device(self):
+        """path to the device of the snapshot LV"""
+        return '/dev/%s/%s' % (self.vg_lv[0], self.snapname())
+
+    def cleanup(self, force=False):
+        """cleanup everything we did here"""
+        if not self.exists and not force:
+            return
+        self.exists = False
+        m = self.mountpoint()
+        # wait for bup to finish
+        try:
+            os.wait()
+        except OSError as e:
+            if e.errno == errno.ECHILD:  # no child process
+                pass
+            else:
+                raise
+        if os.path.ismount(m):
+            if self.call(['umount', m]):
+                self.log('umounted %s' % m)
+            else:
+                self.warn('failed to umount %s' % m)
+        try:
+            os.removedirs(m)
+            self.log('removed directory %s' % m)
+        except:
+            pass
+        device = self.device()
+        try:
+            # --force is required to avoid confirmation
+            cmd = ['lvremove', '--force', device]
+            if self.verbose <= 0:
+                cmd += ['--quiet']
+            if self.verbose >= 3:
+                cmd += ['--verbose']
+            if stat.S_ISBLK(os.stat(device).st_mode):
+                if self.call(cmd):
+                    self.log('dropped snapshot %s' % device)
+                else:
+                    self.warn('failed to drop snapshot %s' % device)
+        except OSError:
+            # normal: the device doesn't exist, moving on
+            return
+
+
+class Pidfile():
+    """this class is designed to be used with the "with" construct
+
+    it will create an exclusive lockfile, detect existing ones and
+    remove stale files (with invalid pids or that the process
+    disappeared)
+
+    it will also cleanup after itself"""
+
+    def __init__(self, path, log=sys.stdout.write, warn=sys.stderr.write):
+        """setup various parameters"""
+        self.pidfile = path
+        self.log = log
+        self.warn = warn
+
+    def __enter__(self):
+        """wrapper around create() to work with the 'with' statement"""
+        return self.create()
+
+    def __exit__(self, t, e, tb):
+        """remove the pid file, unless we detected another process"""
+        # return false to raise, true to pass
+        if t is None:
+            # normal condition, no exception
+            self.remove()
+            return True
+        elif t is ProcessRunningException:
+            # do not remove the other process lockfile
+            return False
+        else:
+            # other exception
+            if self.pidfd:
+                # this was our lockfile, removing
+                self.remove()
+            return False
+
+    def create(self):
+        """initialise pid file"""
+        try:
+            self.pidfd = os.open(self.pidfile,
+                                 os.O_CREAT | os.O_WRONLY | os.O_EXCL)
+            self.log('locked pidfile %s' % self.pidfile)
+        except OSError as e:
+            if e.errno == errno.EEXIST:
+                pid = self._check()
+                if pid:
+                    self.pidfd = None
+                    raise ProcessRunningException(self.pidfile, pid)
+                else:
+                    try:
+                        os.remove(self.pidfile)
+                        self.warn('removed staled lockfile %s'
+                                  % (self.pidfile))
+                        self.pidfd = os.open(self.pidfile,
+                                             os.O_CREAT
+                                             | os.O_WRONLY
+                                             | os.O_EXCL)
+                    except OSError as e:
+                        if e.errno == errno.EACCES:
+                            # we can't write to the file, most likely
+                            # we weren't able to deliver the signal
+                            # because it's running as a different user
+                            # play it safe and abort
+                            with open(self.pidfile, 'r') as f:
+                                raise ProcessRunningException(self.pidfile,
+                                                              f.read())
+            else:
+                raise
+
+        os.write(self.pidfd, str(os.getpid()))
+        os.close(self.pidfd)
+        return self
+
+    def remove(self):
+        """helper function to actually remove the pid file"""
+        self.log('removed pidfile %s' % self.pidfile)
+        os.remove(self.pidfile)
+
+    def _check(self):
+        """check if a process is still running
+
+        the process id is expected to be in pidfile, which should
+        exist.
+
+        if it is still running, returns the pid, if not, return
+        False.
+
+        this assumes we have privileges to send a signal to that
+        process, but if we can't we're likely to be unable to
+        overwrite the pidfile anyways."""
+        with open(self.pidfile, 'r') as f:
+            try:
+                pidstr = f.read()
+                pid = int(pidstr)
+            except ValueError:
+                # not an integer
+                self.log("not an integer: %s" % pidstr)
+                return False
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                self.log("can't deliver signal to %s" % pid)
+                return False
+            else:
+                return pid
+
+
+class ProcessRunningException(Exception):
+    """an exception yielded by the Pidfile class when a process is
+    detected using the pid file"""
+
+    def __init__(self, path, pid):
+        """override parent constructor to keep path and pid"""
+        self.path = path
+        self.pid = pid
+        return Exception.__init__(self,
+                                  'process already running in %s as pid %s'
+                                  % (path, pid))
+
+
+class Singleton(object):
+    """singleton implementation
+
+    inspired from:
+
+   http://stackoverflow.com/questions/42558/python-and-the-singleton-pattern"""
+
+    """the single object this will always return"""
+    _instance = None
+
+    """if __init__ was ran"""
+    _init = False
+
+    def __new__(cls, *args, **kwargs):
+        """override constructor to return a single object"""
+        if not cls._instance:
+            cls._instance = super(Singleton, cls).__new__(
+                cls, *args, **kwargs)
+        return cls._instance
+
+    def __init__(self, *args, **kwargs):
+        """return if __init__ was previously ran"""
+        super(Singleton, self).__init__(self, *args, **kwargs)
+        i = self._init
+        self._init = True
+        return i
+
+
+class GlobalLogger(Singleton):
+    """logger
+
+    this allows logging and warning (to stdout and stderr or a
+    provided file object), with various verbosity levels.
+
+    it also has a convenient executer with support for logging as
+    well.
+
+    XXX: this duplicates the builtin logging module."""
+
+    def __init__(self, verbose=0, log=sys.stdout, warn=sys.stderr):
+        """initialise the singleton, only if never initialised"""
+        if not Singleton.__init__(self):
+            self.verbose = verbose
+            self._log = log
+            self._warn = warn
+
+    @staticmethod
+    def logfmt(msg):
+        """helper function to prepend time to messages"""
+        return "%s %s\n" % (time.ctime(), msg)
+
+    def log(self, msg, level=1):
+        """log message to stdout or logfile, depending on --log"""
+        if self.verbose >= level:
+            self._log.write(GlobalLogger.logfmt(msg))
+
+    def warn(self, msg):
+        """log a warning to stderr and the logfile"""
+        # if log is a file, copy there, otherwise stderr is enough
+        if not self._log.isatty():
+            self.log(msg, 0)
+        self._warn.write(GlobalLogger.logfmt(msg))
+
+    def check_call(self, cmd):
+        """call a procss, log it to the logfile
+
+        return false if it fails, otherwise true"""
+        try:
+            self.log('calling command `%s`' % " ".join(cmd), 2)
+            if self.verbose >= 2:
+                stdout = self._log
+            else:
+                stdout = file(os.devnull)
+            subprocess.check_call(cmd, stdout=stdout, stderr=self._warn,
+                                  close_fds=True)
+        except subprocess.CalledProcessError:
+            self.warn('command failed')
+            return False
+        return True
+
+
+class GlobalTimer(Singleton):
+    """this class is to track time and resources passed"""
+
+    def __init__(self):
+        """initialize the timstamp"""
+        if not Singleton.__init__(self):
+            self.stamp = datetime.datetime.now()
+
+    def times(self):
+        """return a string designing resource usage"""
+        return 'user %s system %s chlduser %s chldsystem %s' % os.times()[:4]
+
+    def diff(self):
+        """a datediff between the creation of the object and now"""
+        return datetime.datetime.now() - self.stamp
+
+    def __str__(self):
+        """return a string representing the time passed and resources used"""
+        return 'elasped: %s (%s)' % (str(self.diff()), self.times())
+
+
+def init(args):
+    """initialise the repo and do other housecleaning"""
+    # init counters
+    GlobalTimer()
+    # initialize GlobalLogger singleton
+    GlobalLogger(args.verbose, args.log)
+    GlobalLogger().log('backing up %s to %s'
+                       % (" ".join(args.paths), os.environ['BUP_DIR']))
+    try:
+        os.chdir(os.environ['BUP_DIR'])
+    except OSError:
+        GlobalLogger().log('bup dir not found, creating')
+        GlobalLogger().check_call(['bup', 'init'])
+    else:
+        if args.clear:
+            GlobalLogger().log('clearing log')
+            GlobalLogger().check_call(['bup', 'index', '--clear'])
+
+
+def bail(status, msg=None):
+    """cleanup on exit"""
+    if msg:
+        GlobalLogger().warn(msg)
+    GlobalLogger().log(str(GlobalTimer()))
+    sys.exit(status)
+
+
+def process(args):
+    """main processing loop"""
+    # current lvm object to cleanup in exception handlers
+    for path in args.paths:
+        prelvm_path = path
+        with args.snapshot(path, args.size,
+                           GlobalLogger().log, GlobalLogger().warn,
+                           GlobalLogger().verbose, GlobalLogger().check_call,
+                           args.mountpoint) as snapshot:
+            path = snapshot.path
+            # XXX: this shouldn't be in the loop like this, bup index should be
+            # able to index multiple paths
+            #
+            # unfortunately, `bup index -x / /var` skips /var...
+            GlobalLogger().log('indexing %s' % path)
+            # XXX: should be -q(uiet) unless verbose > 0 - but bup
+            # index has no -q
+            cmd = ['bup', 'index']
+            if args.verbose >= 3:
+                cmd += ['--verbose']
+            if args.exclude:
+                cmd += map((lambda ex: '--exclude-rx=' + ex), args.exclude)
+            cmd += ['--one-file-system', path]
+            if not GlobalLogger().check_call(cmd):
+                GlobalLogger().warn('skipping save because index failed!')
+                continue
+            GlobalLogger().log('saving %s' % path)
+            cmd = ['bup', 'save']
+            if args.verbose <= 0:
+                cmd += ['--quiet']
+            if args.verbose >= 3:
+                cmd += ['--verbose']
+            if snapshot.exists:
+                # strip the Snapshot mountpoint
+                # XXX: if there are not snapshot, it would flatten everything
+                cmd += ['--strip']
+            # XXX: this should just be args.name, but we save once per path so
+            # it's cleaner to group by path
+            cmd += ['--name', args.name
+                    + '-' + prelvm_path.replace('/', '_'), path]
+            #  -c and -t are apparently useful in case of disaster
+            # unfortunately, there are useless if we don't show the output
+            if args.verbose >= 2:
+                cmd += ['--commit', '--tree']
+            GlobalLogger().check_call(cmd)
+            if args.parity:
+                if GlobalLogger().check_call(['bup', 'fsck', '--par2-ok']):
+                    cmd = ['bup', 'fsck', '--generate']
+                    if args.verbose >= 3:
+                        cmd += ['--verbose']
+                    GlobalLogger().log('generating par2(1) recovery blocks')
+                    GlobalLogger().check_call(cmd)
+                else:
+                    GlobalLogger().warn("""bup reports par2(1) as not working,
+no recovery blocks written""")
+
+
+def main():
+    """main entry point, sets up error handlers and parses arguments"""
+
+    args = ArgumentConfigParser().parse_args()
+    init(args)
+    try:
+        with Pidfile(args.pidfile, GlobalLogger().log, GlobalLogger().warn):
+            process(args)
+    except:
+        # get exception type and error, but don't generate the traceback
+        if args.debug:
+            t, e, b = sys.exc_info()
+        else:
+            t, e = sys.exc_info()[:2]
+        GlobalLogger().warn('aborting with %s exception: %s' % (t.__name__, e))
+        if args.debug:
+                GlobalLogger().warn(traceback.print_tb(b))
+        bail(1)
+    bail(0)
+
+if __name__ == '__main__':
+    main()
