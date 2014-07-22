@@ -604,6 +604,7 @@ def init(args):
     GlobalTimer()
     # initialize GlobalLogger singleton
     GlobalLogger(args.verbose, args.log)
+    GlobalLogger().log('################################################')
     GlobalLogger().log('backing up %s to %s'
                        % (" ".join(args.paths), os.environ['BUP_DIR']))
     if make_dirs_helper(os.environ['BUP_DIR']):
@@ -649,6 +650,7 @@ def process(args):
             if not GlobalLogger().check_call(cmd):
                 GlobalLogger().warn('skipping save because index failed!')
                 continue
+            GlobalLogger().log('#---------------------------------------', 2)
             GlobalLogger().log('saving %s' % path)
             cmd = ['bup', 'save']
             if args.verbose <= 0:
@@ -678,6 +680,7 @@ def process(args):
                 else:
                     GlobalLogger().warn("""bup reports par2(1) as not working,
 no recovery blocks written""")
+            GlobalLogger().log('#---------------------------------------', 2)
 
 
 def main():
