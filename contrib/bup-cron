@@ -86,7 +86,7 @@ tries to be silent if not specified.
                                   snapshot, mount it, then remove it
                                   when it is done, default: %(default)s""")
         self.add_argument('-z', '--size', action='store',
-                          default=Snapshot.size,
+                          default=LvmSnapshot.size,
                           help="""size of the LVM snapshot,
                                   defaults to %(default)s""")
         self.add_argument('-m', '--mountpoint', action='store',
@@ -186,9 +186,6 @@ class SaferFileType(argparse.FileType):
 class Snapshot():
     """abstract class to handle filesystem snapshots"""
 
-    """default snapshot size"""
-    size = '1GB'
-
     """default location the snapshot is mounted on"""
     mountpattern = '/media/bup/%s-%s'
 
@@ -241,6 +238,11 @@ class NoSnapshot(Snapshot):
 
 
 class LvmSnapshot(Snapshot):
+    """Handle LVM snapshot"""
+
+    """default snapshot size"""
+    size = '1GB'
+
     def __enter__(self):
         """set the LVM and mount it"""
         self.vg_lv = None
