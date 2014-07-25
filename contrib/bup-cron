@@ -183,7 +183,7 @@ class SaferFileType(argparse.FileType):
             return sys.stdout
 
 
-class Snapshot():
+class Snapshot(object):
     """abstract class to handle filesystem snapshots"""
 
     """default location the snapshot is mounted on"""
@@ -228,6 +228,14 @@ class Snapshot():
     def cleanup(self):
         """this function should undo all that __enter__() did"""
         pass
+
+    @staticmethod
+    def select(name):
+        """Returns the class who handles name"""
+        for cls in Snapshot.__subclasses__():
+            if name.lower() in cls.__name__.lower():
+                return cls
+        raise TypeError("Unknown type: %s" % name)
 
 
 class NoSnapshot(Snapshot):
@@ -631,10 +639,10 @@ def process(args):
     """main processing loop"""
     # current lvm object to cleanup in exception handlers
     for path in args.paths:
-        with args.snapshot(path, args.size,
-                           GlobalLogger().log, GlobalLogger().warn,
-                           GlobalLogger().verbose, GlobalLogger().check_call,
-                           args.mountpoint) as snapshot:
+        with Snapshot.select(args.snapshot)(path, args.size,
+                             GlobalLogger().log, GlobalLogger().warn,
+                             GlobalLogger().verbose, GlobalLogger().check_call,
+                             args.mountpoint) as snapshot:
             path = snapshot.path
             # XXX: this shouldn't be in the loop like this, bup index should be
             # able to index multiple paths
