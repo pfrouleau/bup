@@ -47,7 +47,7 @@ class ArgumentConfigParser(argparse.ArgumentParser):
     at least path and repo need to be specified.
 """
     description = __doc__
-    pidfile = '.bup-cron.pid'
+    pidfile = 'bup-cron.pid'
 
     def __init__(self):
         """various settings for the argument parser"""
@@ -76,7 +76,7 @@ tries to be silent if not specified.
         self.add_argument('--pidfile', default=None, action='store',
                           help="""lockfile to write to avoid
                                   simultanous execution, defaults to
-                                  $BUP_DIR/%s"""
+                                  /var/run/%s"""
                           % self.pidfile)
         self.add_argument('-s', '--snapshot', nargs='?', default='no',
                           const='lvm', choices=['lvm', 'no'],
@@ -144,6 +144,8 @@ tries to be silent if not specified.
             except IOError:
                 pass
         args = argparse.ArgumentParser.parse_args(self)
+        if args.pidfile is None:
+            args.pidfile = os.path.join('/var/run/', self.pidfile)
         # merge the path and paths arguments
         if args.path:
             args.paths += args.path
@@ -154,8 +156,6 @@ tries to be silent if not specified.
         os.environ['BUP_DIR'] = args.repository
         # remove this one to avoid ambiguity
         del args.repository
-        if args.pidfile is None:
-            args.pidfile = os.path.join(os.environ['BUP_DIR'], self.pidfile)
         # turn args.snapshot into the relevant class
         # sys.modules[__name__] is a hack because the snapshot classes
         # are not in the load path
