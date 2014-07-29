@@ -544,6 +544,7 @@ class Repo(JsonBase):
     parity = False
     one_file_system = True
     includes = []
+    excludes = []
     excludes_rx = []
 
     @staticmethod
@@ -559,6 +560,7 @@ class Repo(JsonBase):
         if 'branch' in dict: o.branch = dict['branch']
         if 'parity' in dict: o.parity = dict['parity']
         if 'one_file_system' in dict: o.parity = dict['one_file_system']
+        if 'excludes' in dict: o.excludes = dict['excludes']
         if 'excludes_rx' in dict: o.excludes_rx = dict['excludes_rx']
         return o
 
@@ -625,6 +627,11 @@ class Job(JsonBase):
                     "/absolute/path/dir/1",
                     "/absolute/path/dir/2",
                     "/absolute/path/dir/3"
+                    ],
+                "excludes":[
+                    "/absolute/path/exc/1",
+                    "/absolute/path/exc/2",
+                    "/absolute/path/exc/3"
                     ],
                 "excludes_rx":[
                     "python-regex-1",
@@ -932,6 +939,8 @@ def update_index(repo, snapshot):
         cmd = ['bup', 'index']
         if GlobalLogger().verbose >= 4:
             cmd += ['--verbose']
+        if repo.excludes:
+           cmd += map((lambda ex: '--exclude=' + ex), snapshot.rebase(repo.excludes))
         if repo.excludes_rx:
             cmd += map((lambda ex: '--exclude-rx=' + ex), repo.excludes_rx)
         if repo.one_file_system:
