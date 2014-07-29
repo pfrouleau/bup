@@ -541,6 +541,7 @@ class Repo(JsonBase):
     local_rep = None
     branch = None
     parity = False
+    one_file_system = True
     includes = []
     excludes_rx = []
 
@@ -555,6 +556,7 @@ class Repo(JsonBase):
         o.includes = dict['includes']
         if 'branch' in dict: o.branch = dict['branch']
         if 'parity' in dict: o.parity = dict['parity']
+        if 'one_file_system' in dict: o.parity = dict['one_file_system']
         if 'excludes_rx' in dict: o.excludes_rx = dict['excludes_rx']
         return o
 
@@ -611,6 +613,7 @@ class Job(JsonBase):
                 "local_rep":"/absolute/path/local.bup",
                 "branch":"branch_pattern",
                 "parity":[true|false],
+                "one_file_system":[true|false],
                 "includes":[
                     "/absolute/path/dir/1",
                     "/absolute/path/dir/2",
@@ -900,7 +903,9 @@ def update_index(repo, snapshot):
             cmd += ['--verbose']
         if repo.excludes_rx:
             cmd += map((lambda ex: '--exclude-rx=' + ex), repo.excludes_rx)
-        cmd += ['--one-file-system', path]
+        if repo.one_file_system:
+            cmd += ['--one-file-system']
+        cmd += [path]
         success &= GlobalLogger().check_call(cmd)
     return success
 
