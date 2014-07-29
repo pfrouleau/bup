@@ -607,6 +607,7 @@ class Job(JsonBase):
     The overall structure is like this:
     {
         "job_name":"job 1",
+        "log_modifications":[true|false],
         "targets":[{
             "snapshot_type":"snapshot_tech",
             "snapshot_size":"size",
@@ -631,6 +632,7 @@ class Job(JsonBase):
     }"""
 
     job_name = None
+    log_modifications = False
     targets = []
 
     @staticmethod
@@ -641,6 +643,7 @@ class Job(JsonBase):
     def load_json(dict):
         o = Job()
         o.job_name = dict['job_name']
+        if 'log_modifications' in dict: o.log_modifications = dict['log_modifications']
         o.targets = dict['targets']
         return o
 
@@ -856,6 +859,28 @@ class GlobalLogger(Singleton):
             return False
         return True
 
+    def check_call_piped(self, cmd1, r1, cmd2, r2):
+        """call a procss, log it to the logfile
+
+        return false if it fails, otherwise true"""
+        result = True
+        p1r = p2r = None
+        try:
+            # XXX: why is the level is not seen as a level?
+            self.log('calling commands `%s` | `%s`' % (' '.join(cmd1), ' '.join(cmd2)), 2)
+            p1 = subprocess.Popen(cmd1, close_fds=True, stderr=self._warn, stdout=subprocess.PIPE)
+            p2 = subprocess.Popen(cmd2, close_fds=True, stderr=self._warn, stdout=self._log, stdin=p1.stdout)
+            p1.stdout.close()
+            p2r = p2.wait()
+            p1r = p1.wait()
+            if p1r > r1 or p2r > r2:
+                self.warn('pipe failed (%s,%s)' % (p1r, p2r))
+                result = False
+        except subprocess.CalledProcessError:
+            self.warn('pipe failed')
+            result = False
+        return [result, p1r, p2r]
+
 
 class Timer(object):
     """this class is to track time and resources passed"""
@@ -913,6 +938,21 @@ def update_index(repo, snapshot):
     return success
 
 
+def list_modifications(repo, snapshot):
+    GlobalLogger().log('Looking for new or modified files:')
+    cmd1 = ['bup', 'index', '-sm'] + snapshot.rebase(repo.includes)
+    cmd2 = ['grep', '-v', r'/\$']
+    success, _, r2 = GlobalLogger().check_call_piped(cmd1, 0, cmd2, 1)
+    if r2 == 1:
+        GlobalLogger().log('Nothing is new or was modified')
+        # Note:
+        # The log says nothing about deleted files... bup index does not list them,
+        # and even if it was, the deleted files always stays in the index and would
+        # always be listed.
+        # Because of this, we cannot skip the save step.
+    return success
+
+
 def save_data(repo, snapshot):
     GlobalLogger().log('saving %s' % snapshot.path)
     cmd = ['bup', 'save']
@@ -959,6 +999,12 @@ def process_repo(args, repo, snapshot):
         GlobalLogger().warn('skipping save because index failed!')
         return
 
+    if args.current_job.log_modifications:
+        GlobalLogger().log('#---------------------------------------', 2)
+        if not list_modifications(repo, snapshot):
+            GlobalLogger().warn('skipping save because grep failed!')
+            return
+
     GlobalLogger().log('#---------------------------------------', 2)
     save_data(repo, snapshot)
 
@@ -989,6 +1035,7 @@ def process(args):
         job_count -= 1
         timer = Timer()
         GlobalLogger().log('Starting job "%s"' % job.job_name)
+        args.current_job = job
         for target in job.targets:
             process_target(args, target)
         GlobalLogger().log('Completed job "%s"' % job.job_name)
