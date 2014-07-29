@@ -28,6 +28,7 @@ features missing
 import argparse
 import datetime
 import errno
+import json
 import os
 import re
 import socket
@@ -468,6 +469,134 @@ if sys.platform.startswith('cygwin'):
                 self.warn("""failed to mount snapshot %s on %s, skipping snapshotting""" %
                           (self.shadow_id, self.mountpattern))
                 self.cleanup(True)
+
+
+class JsonBase(object):
+    """Base class for the json capable classes"""
+
+    @staticmethod
+    def can_load(dict):
+        """Returns True if the dict contains a description of the class.
+
+        Subclasses must redefine it"""
+        raise NotImplementedError()
+
+    @staticmethod
+    def load_json(dict):
+        """Create a class instance and initialize it from dict.
+
+        Subclasses must redefine it"""
+        raise NotImplementedError()
+
+    @staticmethod
+    def load_hook(dict):
+        """hook to be use with json.load()"""
+
+        for cls in JsonBase.__subclasses__():
+            if cls.can_load(dict):
+                return cls.load_json(dict)
+        raise TypeError("Unknown node type")
+
+    @staticmethod
+    def dump_hook(obj):
+        """hook to be use with json.dumps()"""
+
+        if (isinstance(obj, JsonBase)):
+            return obj.__dict__
+        raise TypeError("Unknown type received: %s" % type(obj))
+
+
+class Repo(JsonBase):
+    """A repository in which some directories must be saved in a single branch"""
+
+    local_rep = None
+    branch = None
+    parity = False
+    includes = []
+    excludes_rx = []
+
+    @staticmethod
+    def can_load(dict):
+        return 'local_rep' in dict
+
+    @staticmethod
+    def load_json(dict):
+        o = Repo()
+        o.local_rep = dict['local_rep']
+        o.includes = dict['includes']
+        if 'branch' in dict: o.branch = dict['branch']
+        if 'parity' in dict: o.parity = dict['parity']
+        if 'excludes_rx' in dict: o.excludes_rx = dict['excludes_rx']
+        return o
+
+
+class Target(JsonBase):
+    """A target snapshot from which one or more directories must be saved
+
+    The target is composed of one or more repos. This allow to create one
+    snapshot and use it to backup in various repos."""
+
+    snapshot_type = "no"
+    snapshot_size = None
+    mountpoint = None
+    repos = []
+
+    @staticmethod
+    def can_load(dict):
+        return 'repos' in dict
+
+    @staticmethod
+    def load_json(dict):
+        o = Target()
+        o.repos = dict['repos']
+        if 'snapshot_type' in dict: o.snapshot_type = dict['snapshot_type']
+        if 'snapshot_size' in dict: o.snapshot_size = dict['snapshot_size']
+        if 'mountpoint' in dict: o.mountpoint = dict['mountpoint'].rstrip('/')
+        return o
+
+
+class Job(JsonBase):
+    """A backup job
+
+    A job can be run at a scheduled time. It is composed of one or more targets.
+
+    The overall structure is like this:
+    {
+        "job_name":"job 1",
+        "targets":[{
+            "snapshot_type":"snapshot_tech",
+            "snapshot_size":"size",
+            "mountpoint":"/absolute/path",
+            "repos":[{
+                "local_rep":"/absolute/path/local.bup",
+                "branch":"branch_pattern",
+                "parity":[true|false],
+                "includes":[
+                    "/absolute/path/dir/1",
+                    "/absolute/path/dir/2",
+                    "/absolute/path/dir/3"
+                    ],
+                "excludes_rx":[
+                    "python-regex-1",
+                    "python-regex-2"
+                    ]
+                }]
+            }]
+    }"""
+
+    job_name = None
+    targets = []
+
+    @staticmethod
+    def can_load(dict):
+        return 'targets' in dict
+
+    @staticmethod
+    def load_json(dict):
+        o = Job()
+        o.job_name = dict['job_name']
+        o.targets = dict['targets']
+        return o
 
 
 class Pidfile():
