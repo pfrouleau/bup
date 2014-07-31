@@ -539,6 +539,7 @@ class Repo(JsonBase):
     """A repository in which some directories must be saved in a single branch"""
 
     local_rep = None
+    remote_rep = None
     branch = None
     parity = False
     one_file_system = True
@@ -554,6 +555,7 @@ class Repo(JsonBase):
         o = Repo()
         o.local_rep = dict['local_rep']
         o.includes = dict['includes']
+        if 'remote_rep' in dict: o.remote_rep = dict['remote_rep']
         if 'branch' in dict: o.branch = dict['branch']
         if 'parity' in dict: o.parity = dict['parity']
         if 'one_file_system' in dict: o.parity = dict['one_file_system']
@@ -615,6 +617,7 @@ class Job(JsonBase):
             "continue_without":[true|false],
             "repos":[{
                 "local_rep":"/absolute/path/local.bup",
+                "remote_rep":"bup@address:repos/repo.bup",
                 "branch":"branch_pattern",
                 "parity":[true|false],
                 "one_file_system":[true|false],
@@ -960,6 +963,8 @@ def save_data(repo, snapshot):
         cmd += ['--quiet']
     elif GlobalLogger().verbose >= 3:
         cmd += ['--verbose']
+    if repo.remote_rep:
+        cmd += ['-r', repo.remote_rep]
     # XXX: this should just be args.name, but we save once per snapshot
     # and we strip the path, so it's cleaner to include it in the name
     cmd += ['--name', repo.branch + '-' + snapshot.src_path.replace('/', '_'),
@@ -972,8 +977,16 @@ def save_data(repo, snapshot):
 
 
 def generate_par2(repo):
-    if GlobalLogger().check_call(['bup', 'fsck', '--par2-ok']):
-        cmd = ['bup', 'fsck', '--generate']
+    base_cmd = ['bup', 'fsck']
+    if repo.remote_rep:
+        # XXX: maybe bup-fsck could learn to work on remote repository
+        addr, path = repo.remote_rep.split(':')
+        base_cmd = ['ssh', addr, 'bup', '-d', path, 'fsck']
+
+    cmd = base_cmd + ['--par2-ok']
+    if GlobalLogger().check_call(cmd):
+        cmd = base_cmd
+        cmd += ['--generate']
         if GlobalLogger().verbose >= 3:
             cmd += ['--verbose']
         GlobalLogger().log('generating par2(1) recovery blocks')
@@ -987,7 +1000,10 @@ def process_repo(args, repo, snapshot):
     os.environ['BUP_DIR'] = repo.local_rep
     if make_dirs_helper(repo.local_rep):
         GlobalLogger().log("initiating bup's dir %s" % repo.local_rep)
-        GlobalLogger().check_call(['bup', 'init'])
+        cmd = ['bup', 'init']
+        if repo.remote_rep:
+            cmd += ['-r', repo.remote_rep]
+        GlobalLogger().check_call(cmd)
     else:
         if args.clear:
             GlobalLogger().log('clearing the index')
