@@ -737,14 +737,10 @@ def save_data(args, snapshot):
         cmd += ['--quiet']
     if args.verbose >= 3:
         cmd += ['--verbose']
-    if snapshot.exists:
-        # strip the Snapshot mountpoint
-        # XXX: if there are not snapshot, it would flatten everything
-        cmd += ['--strip']
-    # XXX: this should just be args.name, but we save once per path so
-    # it's cleaner to group by path
-    cmd += ['--name', args.name
-            + '-' + snapshot.src_path.replace('/', '_'), snapshot.path]
+    # XXX: this should just be args.name, but we save once per path and
+    # we strip it, so it's cleaner to group by path
+    cmd += ['--name', args.name + '-' + snapshot.src_path.replace('/', '_'),
+            '--strip', snapshot.path]
     #  -t and -c are apparently useful in case of disaster;
     # unfortunately, they are useless if we don't show or log the output
     if args.verbose >= 2:
