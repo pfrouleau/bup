@@ -109,13 +109,13 @@ tries to be silent if not specified.
                           help="""generate recovery blocks after backup.
                                   runs bup fsck -g after the backup,
                                   requires par2(1).""")
+        self.add_argument('--jobfile', action='store', default=None,
+                          help="""json file specifying the job to do""")
         if 'BUP_DIR' in os.environ:
             defdir = os.environ['BUP_DIR']
         else:
             defdir = None
-        self.add_argument('-d', '--repository',
-                          required=('BUP_DIR' not in os.environ),
-                          default = defdir,
+        self.add_argument('-d', '--repository', default=defdir,
                           help="""the directory to backup to, defaults
                                   to $BUP_DIR (%s)"""
                           % defdir)
@@ -155,9 +155,12 @@ tries to be silent if not specified.
             args.paths += args.path
         # remove this one to avoid ambiguity
         del args.path
-        if len(args.paths) < 1:
-            self.error('argument paths is required')
-        args.jobs = [self.build_job(args)]
+        if len(args.paths) > 0:
+            args.jobs = [self.build_job(args)]
+        elif args.jobfile:
+            args.jobs = json.load(open(args.jobfile), object_hook=JsonBase.load_hook)
+        else:
+            self.error('argument paths or jobfile is required')
         return args
 
     def build_job(self, args):
