@@ -848,13 +848,12 @@ class GlobalLogger(Singleton):
         return True
 
 
-class GlobalTimer(Singleton):
+class Timer(object):
     """this class is to track time and resources passed"""
 
     def __init__(self):
         """initialize the timstamp"""
-        if not Singleton.__init__(self):
-            self.stamp = datetime.datetime.now()
+        self.stamp = datetime.datetime.now()
 
     def times(self):
         """return a string designing resource usage"""
@@ -982,18 +981,11 @@ def process(args):
             GlobalLogger().log(str(timer))
 
 
-def init(args):
-    # init counters
-    GlobalTimer()
-    # initialize GlobalLogger singleton
-    GlobalLogger(args.verbose, args.logfile)
-
-
-def bail(status, msg=None):
+def bail(status, timer, msg=None):
     """cleanup on exit"""
     if msg:
         GlobalLogger().warn(msg)
-    GlobalLogger().log(str(GlobalTimer()))
+    GlobalLogger().log(str(timer))
     sys.exit(status)
 
 
@@ -1001,7 +993,11 @@ def main():
     """main entry point, sets up error handlers and parses arguments"""
 
     args = ArgumentConfigParser().parse_args()
-    init(args)
+    timer = Timer()
+
+    # initialize GlobalLogger singleton
+    GlobalLogger(args.verbose, args.logfile)
+
     try:
         with Pidfile(args.pidfile):
             process(args)
@@ -1011,8 +1007,8 @@ def main():
         GlobalLogger().warn('aborting with %s exception: %s' % (t.__name__, e))
         if args.debug:
             GlobalLogger().warn(traceback.print_tb(b))
-        bail(1)
-    bail(0)
+        bail(1, timer)
+    bail(0, timer)
 
 if __name__ == '__main__':
     main()
