@@ -641,7 +641,7 @@ def process(args):
             # XXX: should be -q(uiet) unless verbose > 0 - but bup
             # index has no -q
             cmd = ['bup', 'index']
-            if args.verbose >= 3:
+            if args.verbose >= 4:
                 cmd += ['--verbose']
             if args.exclude:
                 cmd += map((lambda ex: '--exclude-rx=' + ex), args.exclude)
