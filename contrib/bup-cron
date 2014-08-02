@@ -570,6 +570,7 @@ class Target(JsonBase):
     snapshot_type = "no"
     snapshot_size = None
     mountpoint = None
+    continue_without = True
     repos = []
 
     @staticmethod
@@ -583,6 +584,7 @@ class Target(JsonBase):
         if 'snapshot_type' in dict: o.snapshot_type = dict['snapshot_type']
         if 'snapshot_size' in dict: o.snapshot_size = dict['snapshot_size']
         if 'mountpoint' in dict: o.mountpoint = dict['mountpoint'].rstrip('/')
+        if 'continue_without' in dict: o.continue_without = dict['continue_without']
         return o
 
     def common_prefix(self):
@@ -609,6 +611,7 @@ class Job(JsonBase):
             "snapshot_type":"snapshot_tech",
             "snapshot_size":"size",
             "mountpoint":"/absolute/path",
+            "continue_without":[true|false],
             "repos":[{
                 "local_rep":"/absolute/path/local.bup",
                 "branch":"branch_pattern",
@@ -970,8 +973,12 @@ def process_target(args, target):
                          target.snapshot_size, target.mountpoint,
                          GlobalLogger().log, GlobalLogger().warn,
                          GlobalLogger().verbose, GlobalLogger().check_call) as snapshot:
-        for repo in target.repos:
-            process_repo(args, repo, snapshot)
+        if snapshot.exists or target.continue_without or 'no' == target.snapshot_type.lower():
+            for repo in target.repos:
+                process_repo(args, repo, snapshot)
+        else:
+            GlobalLogger().warn('skipping %s because snapshot failled'
+                                % target.mountpoint)
 
 
 def process(args):
