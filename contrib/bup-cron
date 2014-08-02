@@ -269,8 +269,9 @@ class Snapshot(object):
         raise TypeError("Unknown type: %s" % name)
 
     def rebase(self, paths):
-        """rebase the origin paths to the mounted location"""
-        return [p.replace(self.src_path, self.path) for p in paths]
+        """rebase the origin paths to the mounted location and make
+        the paths absolute when needed"""
+        return [os.path.join(self.path, p.replace(self.src_path, self.path)) for p in paths]
 
 
 class NoSnapshot(Snapshot):
@@ -655,6 +656,7 @@ class Target(JsonBase):
     snapshot_size = None
     mountpoint = None
     continue_without = True
+    root = None
     repos = []
 
     @staticmethod
@@ -665,6 +667,7 @@ class Target(JsonBase):
     def load_json(dict):
         o = Target()
         o.repos = dict['repos']
+        if 'root' in dict: o.root = dict['root'].rstrip('/')
         if 'snapshot_type' in dict: o.snapshot_type = dict['snapshot_type']
         if 'snapshot_size' in dict: o.snapshot_size = dict['snapshot_size']
         if 'mountpoint' in dict: o.mountpoint = dict['mountpoint'].rstrip('/')
@@ -672,15 +675,18 @@ class Target(JsonBase):
         return o
 
     def common_prefix(self):
-        includes = []
-        for r in self.repos:
-            includes += r.includes
-        prefix = os.path.commonprefix(includes)
-        # with includes=['/p/a32','/p/a64']
-        # prefix = '/p/a', but we need '/p/'
-        if prefix[-1] != '/':
-            prefix = os.path.dirname(prefix)
-        return prefix
+        if self.root:
+            return self.root
+        else:
+            includes = []
+            for r in self.repos:
+                includes += r.includes
+            prefix = os.path.commonprefix(includes)
+            # with includes=['/p/a32','/p/a64']
+            # prefix = '/p/a', but we need '/p/'
+            if prefix[-1] != '/':
+                prefix = os.path.dirname(prefix)
+            return prefix.rstrip('/')
 
 
 class Job(JsonBase):
@@ -693,6 +699,7 @@ class Job(JsonBase):
         "job_name":"job 1",
         "log_modifications":[true|false],
         "targets":[{
+            "root":"file_system_root",
             "snapshot_type":"snapshot_tech",
             "snapshot_size":"size",
             "mountpoint":"/absolute/path",
@@ -705,14 +712,14 @@ class Job(JsonBase):
                 "parity":[true|false],
                 "one_file_system":[true|false],
                 "includes":[
-                    "/absolute/path/dir/1",
-                    "/absolute/path/dir/2",
-                    "/absolute/path/dir/3"
+                    "${root}path/dir/1",
+                    "${root}path/dir/2",
+                    "${root}path/dir/3"
                     ],
                 "excludes":[
-                    "/absolute/path/exc/1",
-                    "/absolute/path/exc/2",
-                    "/absolute/path/exc/3"
+                    "${root}path/exc/1",
+                    "${root}path/exc/2",
+                    "${root}path/exc/3"
                     ],
                 "excludes_rx":[
                     "python-regex-1",
