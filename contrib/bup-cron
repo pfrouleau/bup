@@ -221,7 +221,7 @@ class Snapshot(object):
                  verbose=0, call=subprocess.check_call):
         """initialise the snapshot array
 
-        path is expected to be the root of the filesystem; log and warn are
+        path is expected to be part of the target filesystem; log and warn are
         logging utilities; call is a way to call processes that will return
         true on success or false otherwise"""
         self.src_path = path
@@ -286,44 +286,42 @@ class LvmSnapshot(Snapshot):
     def __enter__(self):
         """set the LVM and mount it"""
         self.vg_lv = None
-        if os.path.ismount(self.path):
-            device = self.find_device()
-            if device:
-                # vg, lv
-                self.vg_lv = LvmSnapshot.find_vg_lv(device)
-            if device and self.vg_lv:
-                # forced cleanup
-                self.cleanup(True)
-                cmd = ['lvcreate', '--size', self.size, '--snapshot',
-                       '--name', self.snapname(), device]
-                if self.verbose <= 0:
-                    cmd += ['--quiet']
-                if self.verbose >= 3:
-                    cmd += ['--verbose']
-                if self.call(cmd):
-                    if make_dirs_helper(self.mountpoint()):
-                        self.log('mountpoint %s created'
-                                 % self.mountpoint())
-                    self.exists = True
-                    if self.call(['mount', self.device(),
-                                  self.mountpoint()]):
-                        self.path = self.mountpoint()
-                    else:
-                        self.warn("""failed to mount snapshot %s on %s,
-skipping snapshotting"""
-                                  % (self.snapname(),
-                                     self.mountpoint()))
-                        self.cleanup()
+        device, fs_root = self.find_device()
+        if device:
+            self.src_path = fs_root
+            self.path = fs_root
+            # vg, lv
+            self.vg_lv = LvmSnapshot.find_vg_lv(device)
+        if device and self.vg_lv:
+            # forced cleanup
+            self.cleanup(True)
+            cmd = ['lvcreate', '--size', self.size, '--snapshot',
+                   '--name', self.snapname(), device]
+            if self.verbose <= 0:
+                cmd += ['--quiet']
+            if self.verbose >= 3:
+                cmd += ['--verbose']
+            if self.call(cmd):
+                if make_dirs_helper(self.mountpoint()):
+                    self.log('mountpoint %s created'
+                             % self.mountpoint())
+                self.exists = True
+                if self.call(['mount', self.device(),
+                              self.mountpoint()]):
+                    self.path = self.mountpoint()
                 else:
-                    self.warn("""failed to create snapshot %s/%s,
-skipping snapshooting"""
-                              % self.vg_lv)
+                    self.warn("""failed to mount snapshot %s on %s,
+skipping snapshotting"""
+                              % (self.snapname(),
+                                 self.mountpoint()))
+                    self.cleanup()
             else:
-                # XXX: we could try to find the parent mountpoint...
-                self.warn('%s is not a LVM mountpoint, skipping snapshotting'
-                          % self.path)
+                self.warn("""failed to create snapshot %s/%s,
+skipping snapshooting"""
+                          % self.vg_lv)
         else:
-            self.warn('%s is not a mountpoint, skipping snapshotting'
+            # XXX: we could try to find the parent mountpoint...
+            self.warn('%s is not a LVM mountpoint, skipping snapshotting'
                       % self.path)
         return self
 
@@ -332,12 +330,12 @@ skipping snapshooting"""
 
         returns the device or False if none found"""
 
-        mounts = subprocess.check_output(['mount'])
         try:
-            return re.match(r".*^(/[^ ]*) on %s .*" % self.path, mounts,
-                            re.MULTILINE | re.DOTALL).group(1)
+            lastline = subprocess.check_output(['df', '-P', self.path]).splitlines()[-1]
+            parts = lastline.split()
+            return (parts[0], parts[-1])
         except:
-            return False
+            return (False, None)
 
     @staticmethod
     def find_vg_lv(device):
