@@ -16,9 +16,8 @@ limitations
    to bup, which would bring "interesting" results, loose
    interactivity (unless we use select(), which seems overkill), and
    complicate everything
+ * no command-line parameters for many job's features
  * see XXX below for more
- * doesn't support remote hosts, because it assumes bup-index can
-   store files remotely
 
 features missing
  * --test to run compare-tree after backup
@@ -158,15 +157,38 @@ tries to be silent if not specified.
         del args.path
         if len(args.paths) < 1:
             self.error('argument paths is required')
-        os.environ['BUP_DIR'] = args.repository
-        # remove this one to avoid ambiguity
-        del args.repository
-        # turn args.snapshot into the relevant class
-        # sys.modules[__name__] is a hack because the snapshot classes
-        # are not in the load path
-        args.snapshot = getattr(sys.modules[__name__], args.snapshot.title()
-                                + 'Snapshot')
+        args.jobs = [self.build_job(args)]
         return args
+
+    def build_job(self, args):
+        """Build the job instance out of the command line parameters
+
+        Since the paths must be the file system mount point, put one
+        path per target"""
+        job = Job()
+        job.job_name = "ad-hoc"
+
+        if args.repository:
+            local_rep = args.repository
+            del args.repository # remove it to avoid ambiguity
+        else:
+            local_rep = os.environ['BUP_DIR']
+
+        for path in args.paths:
+            repo = Repo()
+            repo.local_rep = local_rep
+            repo.branch = args.name
+            repo.includes = [path]
+
+            target = Target()
+            target.snapshot_type = args.snapshot
+            target.snapshot_size = args.size
+            target.mountpoint = args.mountpoint
+
+            target.repos += [repo]
+            job.targets += [target]
+
+        return job
 
 
 class SaferFileType(argparse.FileType):
@@ -194,8 +216,9 @@ class Snapshot(object):
     """default location the snapshot is mounted on"""
     mountpattern = '/media/bup/%s-%s'
 
-    def __init__(self, path, size, log=sys.stdout.write, warn=sys.stderr.write,
-                 verbose=0, call=subprocess.check_call, mountpattern=None):
+    def __init__(self, path, size, mountpattern=None,
+                 log=sys.stdout.write, warn=sys.stderr.write,
+                 verbose=0, call=subprocess.check_call):
         """initialise the snapshot array
 
         path is expected to be the root of the filesystem; log and warn are
@@ -241,6 +264,10 @@ class Snapshot(object):
             if name.lower() in cls.__name__.lower():
                 return cls
         raise TypeError("Unknown type: %s" % name)
+
+    def rebase(self, paths):
+        """rebase the origin paths to the mounted location"""
+        return [p.replace(self.src_path, self.path) for p in paths]
 
 
 class NoSnapshot(Snapshot):
@@ -431,6 +458,7 @@ if sys.platform.startswith('cygwin'):
                 #* SNAPSHOT ID = {5a698842-f325-404a-83e7-6a7fa08760a1}
                 self.shadow_id = re.search("\* SNAPSHOT ID = (\{[0-9A-Fa-f-]{36}\})", output).group(1)
                 self.log('Shadow copy created: %s' % self.shadow_id)
+                self.src_path = self._convert2linux(device)
                 self.exists = True
                 return True
             except:
@@ -553,6 +581,17 @@ class Target(JsonBase):
         if 'snapshot_size' in dict: o.snapshot_size = dict['snapshot_size']
         if 'mountpoint' in dict: o.mountpoint = dict['mountpoint'].rstrip('/')
         return o
+
+    def common_prefix(self):
+        includes = []
+        for r in self.repos:
+            includes += r.includes
+        prefix = os.path.commonprefix(includes)
+        # with includes=['/p/a32','/p/a64']
+        # prefix = '/p/a', but we need '/p/'
+        if prefix[-1] != '/':
+            prefix = os.path.dirname(prefix)
+        return prefix
 
 
 class Job(JsonBase):
@@ -846,41 +885,48 @@ def make_dirs_helper(path):
         return False
 
 
-def update_index(args, path):
-    GlobalLogger().log('indexing %s' % path)
-    # XXX: should be -q(uiet) unless verbose > 0 - but bup
-    # index has no -q
-    cmd = ['bup', 'index']
-    if args.verbose >= 4:
-        cmd += ['--verbose']
-    if args.exclude:
-        cmd += map((lambda ex: '--exclude-rx=' + ex), args.exclude)
-    cmd += ['--one-file-system', path]
-    return GlobalLogger().check_call(cmd)
+def update_index(repo, snapshot):
+    success = True
+    for path in snapshot.rebase(repo.includes):
+        # XXX: this shouldn't be in the loop like this, bup index should be
+        # able to index multiple paths
+        #
+        # unfortunately, `bup index --one-file-system / /var` skips /var...
+        GlobalLogger().log('indexing %s' % path)
+        # XXX: should be -q(uiet) unless verbose > 0 - but bup
+        # index has no -q
+        cmd = ['bup', 'index']
+        if GlobalLogger().verbose >= 4:
+            cmd += ['--verbose']
+        if repo.excludes_rx:
+            cmd += map((lambda ex: '--exclude-rx=' + ex), repo.excludes_rx)
+        cmd += ['--one-file-system', path]
+        success &= GlobalLogger().check_call(cmd)
+    return success
 
 
-def save_data(args, snapshot):
+def save_data(repo, snapshot):
     GlobalLogger().log('saving %s' % snapshot.path)
     cmd = ['bup', 'save']
-    if args.verbose <= 0:
+    if GlobalLogger().verbose <= 0:
         cmd += ['--quiet']
-    if args.verbose >= 3:
+    elif GlobalLogger().verbose >= 3:
         cmd += ['--verbose']
-    # XXX: this should just be args.name, but we save once per path and
-    # we strip it, so it's cleaner to group by path
-    cmd += ['--name', args.name + '-' + snapshot.src_path.replace('/', '_'),
+    # XXX: this should just be args.name, but we save once per snapshot
+    # and we strip the path, so it's cleaner to include it in the name
+    cmd += ['--name', repo.branch + '-' + snapshot.src_path.replace('/', '_'),
             '--strip', snapshot.path]
     #  -t and -c are apparently useful in case of disaster;
     # unfortunately, they are useless if we don't show or log the output
-    if args.verbose >= 2:
+    if GlobalLogger().verbose >= 2:
         cmd += ['--tree', '--commit']
     GlobalLogger().check_call(cmd)
 
 
-def generate_par2(args):
+def generate_par2(repo):
     if GlobalLogger().check_call(['bup', 'fsck', '--par2-ok']):
         cmd = ['bup', 'fsck', '--generate']
-        if args.verbose >= 3:
+        if GlobalLogger().verbose >= 3:
             cmd += ['--verbose']
         GlobalLogger().log('generating par2(1) recovery blocks')
         GlobalLogger().check_call(cmd)
@@ -889,46 +935,60 @@ def generate_par2(args):
 no recovery blocks written""")
 
 
+def process_repo(args, repo, snapshot):
+    os.environ['BUP_DIR'] = repo.local_rep
+    if make_dirs_helper(repo.local_rep):
+        GlobalLogger().log("initiating bup's dir %s" % repo.local_rep)
+        GlobalLogger().check_call(['bup', 'init'])
+    else:
+        if args.clear:
+            GlobalLogger().log('clearing the index')
+            GlobalLogger().check_call(['bup', 'index', '--clear'])
+
+    GlobalLogger().log('backing up %s to %s'
+                       % (" ".join(repo.includes), repo.local_rep))
+    if not update_index(repo, snapshot):
+        GlobalLogger().warn('skipping save because index failed!')
+        return
+
+    GlobalLogger().log('#---------------------------------------', 2)
+    save_data(repo, snapshot)
+
+    if repo.parity:
+        generate_par2(repo)
+    GlobalLogger().log('#---------------------------------------', 2)
+
+
+def process_target(args, target):
+    # current lvm object to cleanup in exception handlers
+    with Snapshot.select(target.snapshot_type)(target.common_prefix(),
+                         target.snapshot_size, target.mountpoint,
+                         GlobalLogger().log, GlobalLogger().warn,
+                         GlobalLogger().verbose, GlobalLogger().check_call) as snapshot:
+        for repo in target.repos:
+            process_repo(args, repo, snapshot)
+
+
 def process(args):
     """main processing loop"""
-    # current lvm object to cleanup in exception handlers
-    for path in args.paths:
-        with Snapshot.select(args.snapshot)(path, args.size,
-                             GlobalLogger().log, GlobalLogger().warn,
-                             GlobalLogger().verbose, GlobalLogger().check_call,
-                             args.mountpoint) as snapshot:
-            # XXX: this shouldn't be in the loop like this, bup index should be
-            # able to index multiple paths
-            #
-            # unfortunately, `bup index -x / /var` skips /var...
-            if not update_index(args, snapshot.path):
-                GlobalLogger().warn('skipping save because index failed!')
-                continue
-
-            GlobalLogger().log('#---------------------------------------', 2)
-            save_data(args, snapshot)
-
-            if args.parity:
-                generate_par2(args)
-            GlobalLogger().log('#---------------------------------------', 2)
+    GlobalLogger().log('################################################', 1)
+    job_count = len(args.jobs)
+    for job in args.jobs:
+        job_count -= 1
+        timer = Timer()
+        GlobalLogger().log('Starting job "%s"' % job.job_name)
+        for target in job.targets:
+            process_target(args, target)
+        GlobalLogger().log('Completed job "%s"' % job.job_name)
+        if job_count > 0:
+            GlobalLogger().log(str(timer))
 
 
 def init(args):
-    """initialise the repo and do other housecleaning"""
     # init counters
     GlobalTimer()
     # initialize GlobalLogger singleton
     GlobalLogger(args.verbose, args.logfile)
-    GlobalLogger().log('################################################')
-    GlobalLogger().log('backing up %s to %s'
-                       % (" ".join(args.paths), os.environ['BUP_DIR']))
-    if make_dirs_helper(os.environ['BUP_DIR']):
-        GlobalLogger().log("initiating bup's dir %s" % os.environ['BUP_DIR'])
-        GlobalLogger().check_call(['bup', 'init'])
-    else:
-        if args.clear:
-            GlobalLogger().log('clearing log')
-            GlobalLogger().check_call(['bup', 'index', '--clear'])
 
 
 def bail(status, msg=None):
