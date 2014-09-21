@@ -541,6 +541,7 @@ class Repo(JsonBase):
     local_rep = None
     remote_rep = None
     branch = None
+    graft = False
     parity = False
     one_file_system = True
     includes = []
@@ -558,6 +559,7 @@ class Repo(JsonBase):
         o.includes = dict['includes']
         if 'remote_rep' in dict: o.remote_rep = dict['remote_rep']
         if 'branch' in dict: o.branch = dict['branch']
+        if 'graft' in dict: o.graft = dict['graft']
         if 'parity' in dict: o.parity = dict['parity']
         if 'one_file_system' in dict: o.parity = dict['one_file_system']
         if 'excludes' in dict: o.excludes = dict['excludes']
@@ -621,6 +623,7 @@ class Job(JsonBase):
                 "local_rep":"/absolute/path/local.bup",
                 "remote_rep":"bup@address:repos/repo.bup",
                 "branch":"branch_pattern",
+                "graft":[true|false],
                 "parity":[true|false],
                 "one_file_system":[true|false],
                 "includes":[
@@ -974,14 +977,19 @@ def save_data(repo, snapshot):
         cmd += ['--verbose']
     if repo.remote_rep:
         cmd += ['-r', repo.remote_rep]
-    # XXX: this should just be args.name, but we save once per snapshot
-    # and we strip the path, so it's cleaner to include it in the name
-    cmd += ['--name', repo.branch + '-' + snapshot.src_path.replace('/', '_'),
-            '--strip', snapshot.path]
+    if repo.graft and snapshot.exists:
+        cmd += ['--name', repo.branch]
+        cmd += ['--graft', '%s=%s' % (snapshot.path, snapshot.src_path)]
+    else:
+        # XXX: this should just be args.name, but we save once per snapshot
+        # and we strip the path, so it's cleaner to include it in the name
+        cmd += ['--name', repo.branch + '-' + snapshot.src_path.replace('/', '_')]
+        cmd += ['--strip-path', snapshot.path]
     #  -t and -c are apparently useful in case of disaster;
     # unfortunately, they are useless if we don't show or log the output
     if GlobalLogger().verbose >= 2:
         cmd += ['--tree', '--commit']
+    cmd += snapshot.rebase(repo.includes)
     GlobalLogger().check_call(cmd)
 
 
