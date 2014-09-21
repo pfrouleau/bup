@@ -700,7 +700,7 @@ class Pidfile():
         try:
             self.pidfd = os.open(self.pidfile,
                                  os.O_CREAT | os.O_WRONLY | os.O_EXCL)
-            GlobalLogger().log('locked pidfile %s' % self.pidfile)
+            GlobalLogger().log('locked pidfile %s' % quote(self.pidfile))
         except OSError as e:
             if e.errno == errno.EEXIST:
                 pid = self._check()
@@ -711,7 +711,7 @@ class Pidfile():
                     try:
                         os.remove(self.pidfile)
                         GlobalLogger().warn('removed staled lockfile %s'
-                                            % (self.pidfile))
+                                            % quote(self.pidfile))
                         self.pidfd = os.open(self.pidfile,
                                              os.O_CREAT
                                              | os.O_WRONLY
@@ -734,7 +734,7 @@ class Pidfile():
 
     def remove(self):
         """helper function to actually remove the pid file"""
-        GlobalLogger().log('removed pidfile %s' % self.pidfile)
+        GlobalLogger().log('removed pidfile %s' % quote(self.pidfile))
         os.remove(self.pidfile)
 
     def _check(self):
@@ -860,7 +860,7 @@ class GlobalLogger(Singleton):
 
         return false if it fails, otherwise true"""
         try:
-            self.log('calling command `%s`' % " ".join(cmd), 2)
+            self.log('calling command `%s`' % quotes(cmd), 2)
             if self.verbose >= 2:
                 stdout = self._log
             else:
@@ -915,6 +915,20 @@ class Timer(object):
         return 'elasped: %s (%s)' % (str(self.diff()), self.times())
 
 
+_quotable=re.compile('\s') # Any white space char (respects UNICODE)
+def quote(str):
+    """Quote str if it contains white spaces"""
+    if _quotable.search(str):
+        return "'" + str + "'"
+    return str
+
+
+def quotes(parts):
+    """Quote the individual strings in parts if it contains white spaces and
+       return them as a single string"""
+    return ' '.join(quote(p) for p in parts)
+
+
 def make_dirs_helper(path):
     """Create the directory if it does not exist
 
@@ -936,7 +950,7 @@ def update_index(repo, snapshot):
         # able to index multiple paths
         #
         # unfortunately, `bup index --one-file-system / /var` skips /var...
-        GlobalLogger().log('indexing %s' % path)
+        GlobalLogger().log('indexing %s' % quote(path))
         # XXX: should be -q(uiet) unless verbose > 0 - but bup
         # index has no -q
         cmd = ['bup', 'index']
@@ -955,7 +969,7 @@ def update_index(repo, snapshot):
 
 def list_modifications(repo, snapshot):
     GlobalLogger().log('Looking for new or modified files:')
-    cmd1 = ['bup', 'index', '-sm'] + snapshot.rebase(repo.includes)
+    cmd1 = ['bup', 'index', '--status'] + snapshot.rebase(repo.includes)
     cmd2 = ['grep', '-v', r'/\$']
     success, _, r2 = GlobalLogger().check_call_piped(cmd1, 0, cmd2, 1)
     if r2 == 1:
@@ -969,7 +983,7 @@ def list_modifications(repo, snapshot):
 
 
 def save_data(repo, snapshot):
-    GlobalLogger().log('saving %s' % snapshot.path)
+    GlobalLogger().log('saving %s' % quote(snapshot.path))
     cmd = ['bup', 'save']
     if GlobalLogger().verbose <= 0:
         cmd += ['--quiet']
@@ -1015,7 +1029,7 @@ no recovery blocks written""")
 def process_repo(args, repo, snapshot):
     os.environ['BUP_DIR'] = repo.local_rep
     if make_dirs_helper(repo.local_rep):
-        GlobalLogger().log("initiating bup's dir %s" % repo.local_rep)
+        GlobalLogger().log("initiating bup's dir %s" % quote(repo.local_rep))
         cmd = ['bup', 'init']
         if repo.remote_rep:
             cmd += ['-r', repo.remote_rep]
@@ -1026,7 +1040,7 @@ def process_repo(args, repo, snapshot):
             GlobalLogger().check_call(['bup', 'index', '--clear'])
 
     GlobalLogger().log('backing up %s to %s'
-                       % (" ".join(repo.includes), repo.local_rep))
+                       % (quotes(repo.includes), quote(repo.local_rep)))
     if not update_index(repo, snapshot):
         GlobalLogger().warn('skipping save because index failed!')
         return
@@ -1056,7 +1070,7 @@ def process_target(args, target):
                 process_repo(args, repo, snapshot)
         else:
             GlobalLogger().warn('skipping %s because snapshot failled'
-                                % target.mountpoint)
+                                % quote(target.mountpoint))
 
 
 def process(args):
