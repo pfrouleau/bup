@@ -981,8 +981,7 @@ def save_data(repo, snapshot):
         cmd += ['--name', repo.branch]
         cmd += ['--graft', '%s=%s' % (snapshot.path, snapshot.src_path)]
     else:
-        # XXX: this should just be args.name, but we save once per snapshot
-        # and we strip the path, so it's cleaner to include it in the name
+        # we strip the path, so it's cleaner to include it in the name
         cmd += ['--name', repo.branch + '-' + snapshot.src_path.replace('/', '_')]
         cmd += ['--strip-path', snapshot.path]
     #  -t and -c are apparently useful in case of disaster;
