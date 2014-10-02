@@ -304,7 +304,7 @@ if opt.update:
 if opt['print'] or opt.status or opt.modified:
     for (name, ent) in index.Reader(indexfile).filter(extra or ['']):
         if (opt.modified 
-            and (ent.is_valid() or ent.is_deleted() or not ent.mode)):
+            and (ent.is_valid() or not ent.mode)):
             continue
         line = ''
         if opt.status:
