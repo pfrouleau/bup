@@ -62,6 +62,44 @@ def clear_index(indexfile):
                 raise
 
 
+def scrub_index(top):
+    # tmax and start must be epoch nanoseconds.
+    tmax = (time.time() - 1) * 10**9
+    ri = index.Reader(indexfile)
+    msw = index.MetaStoreWriter(indexfile + '.meta')
+    wi = index.Writer(indexfile, msw, tmax)
+    rig = IterHelper(ri.iter(name=top))
+    tstart = int(time.time()) * 10**9
+
+    bup_dir = os.path.abspath(git.repo())
+    hlinks = hlinkdb.HLinkDB(indexfile + '.hlink')
+
+    log('scrubing the index...\n')
+    hlinks.prepare_save()
+    if ri.exists():
+        ri.save()
+        wi.flush()
+        wr = wi.new_reader()
+        if opt.check:
+            log('check: before scrubing: oldfile\n')
+            check_index(ri)
+            log('check: before scrubing newfile\n')
+            check_index(wr)
+        mi = index.Writer(indexfile, msw, tmax)
+
+        for e in index.merge(ri, wr):
+            if e.exists():
+                mi.add_ixentry(e)
+            elif opt.verbose >= 2:
+                log('- %s\n' % e.name)
+
+        ri.close()
+        mi.close()
+        wr.close()
+    else:
+        wi.close()
+
+
 def update_index(top, excluded_paths, exclude_rxs):
     # tmax and start must be epoch nanoseconds.
     tmax = (time.time() - 1) * 10**9
@@ -194,6 +232,7 @@ s,status   print each filename with a status char (A/M/D) (implies -p)
 u,update   recursively update the index entries for the given file/dir names (default if no mode is specified)
 check      carefully check index file integrity
 clear      clear the default index
+scrub      scrub the deleted entries from the index
  Options:
 H,hash     print the hash for each object next to its name
 l,long     print more information about each file
@@ -216,6 +255,7 @@ if not (opt.modified or \
         opt.status or \
         opt.update or \
         opt.check or \
+        opt.scrub or \
         opt.clear):
     opt.update = 1
 if (opt.fake_valid or opt.fake_invalid) and not opt.update:
@@ -248,6 +288,12 @@ if opt.clear:
 excluded_paths = parse_excludes(flags, o.fatal)
 exclude_rxs = parse_rx_excludes(flags, o.fatal)
 paths = index.reduce_paths(extra)
+
+if opt.scrub:
+    if not extra:
+        o.fatal('scrub mode (--scrub) requested but no paths given')
+    for (rp,path) in paths:
+        scrub_index(rp)
 
 if opt.update:
     if not extra:
