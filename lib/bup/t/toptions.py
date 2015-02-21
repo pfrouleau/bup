@@ -72,6 +72,7 @@ x,extended,no-simple   extended mode [2]
 n,num+  a numeric option
 S,Seed+  a numeric option with default [1024]
 neg+  a numeric option with negative default [-1]
+v,verbose a boolean with a default value [2]
 """
 
 @wvtest
@@ -103,9 +104,10 @@ def test_options():
     WVPASSEQ(opt.S, 1024)
 
     (opt,flags,extra) = o.parse(['--onlylong', '-t', '--no-onlylong',
-                                 '--smart', '--simple'])
+                                 '--smart', '--simple', '-v'])
     WVPASSEQ((opt.t, opt.q, opt.onlylong), (1, None, 0))
     WVPASSEQ((opt.stupid, opt.no_stupid), (False, True))
     WVPASSEQ((opt.smart, opt.no_smart), (True, False))
     WVPASSEQ((opt.x, opt.extended, opt.no_simple), (0,0,0))
     WVPASSEQ((opt.no_x, opt.no_extended, opt.simple), (True,True,True))
+    WVPASSEQ((opt.v, opt.verbose), (1,1))

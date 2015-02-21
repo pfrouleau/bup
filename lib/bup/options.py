@@ -259,9 +259,6 @@ class Options:
 
         opt = OptDict(aliases=self._aliases)
 
-        for k,v in self._defaults.iteritems():
-            opt[k] = v
-
         for (k,v) in flags:
             k = k.lstrip('-')
             if k in ('h', '?', 'help', 'usage'):
@@ -279,4 +276,9 @@ class Options:
                 elif self._isnums[k]:
                     v = _intify(v)
             opt[k] = _invert(v, invert)
+
+        for k,v in self._defaults.iteritems():
+            if opt._opts.get(k) is None:
+                opt[k] = v
+
         return (opt,flags,extra)
