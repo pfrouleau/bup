@@ -10,7 +10,7 @@ ruin       ruin the specified bloom file (clearing the bitfield)
 f,force    ignore existing bloom file and regenerate it from scratch
 o,output=  output bloom filename (default: auto)
 d,dir=     input directory to look for idx files (default: auto)
-k,hashes=  number of hash functions to use (4 or 5) (default: auto)
+k,hashes+  number of hash functions to use (4 or 5) (default: auto)
 c,check=   check the given .idx file against the bloom filter
 """
 

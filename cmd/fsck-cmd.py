@@ -132,7 +132,7 @@ r,repair    attempt to repair errors using par2 (dangerous!)
 g,generate  generate auto-repair information using par2
 v,verbose   increase verbosity (can be used more than once)
 quick       just check pack sha1sum, don't use git verify-pack
-j,jobs=     run 'n' jobs in parallel
+j,jobs+     run 'n' jobs in parallel
 par2-ok     immediately return 0 if par2 is ok, 1 if not
 disable-par2  ignore par2 even if it is available
 """

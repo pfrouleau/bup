@@ -61,7 +61,7 @@ l,longoption=   long option with parameters and a really really long description
 p= short option with parameters
 onlylong  long option with no short
 neveropt never called options
-deftest1=  a default option with default [1]
+deftest1+  a default option with default [1]
 deftest2=  a default option with [1] default [2]
 deftest3=  a default option with [3] no actual default
 deftest4=  a default option with [[square]]
@@ -69,30 +69,38 @@ deftest5=  a default option with "correct" [[square]
 s,smart,no-stupid  disable stupidity
 x,extended,no-simple   extended mode [2]
 #,compress=  set compression level [5]
+n,num+  a numeric option
+S,Seed+  a numeric option with default [1024]
+neg+  a numeric option with negative default [-1]
 """
 
 @wvtest
 def test_options():
     o = options.Options(optspec)
-    (opt,flags,extra) = o.parse(['-tttqp', 7, '--longoption', '19',
-                                 'hanky', '--onlylong', '-7'])
+    (opt,flags,extra) = o.parse(['-tttqp', '7', '--longoption', '19',
+                                 '-n', '2048', 'hanky', '--onlylong', '-7'])
     WVPASSEQ(flags[0], ('-t', ''))
     WVPASSEQ(flags[1], ('-t', ''))
     WVPASSEQ(flags[2], ('-t', ''))
     WVPASSEQ(flags[3], ('-q', ''))
-    WVPASSEQ(flags[4], ('-p', 7))
+    WVPASSEQ(flags[4], ('-p', '7'))
     WVPASSEQ(flags[5], ('--longoption', '19'))
+    WVPASSEQ(flags[6], ('-n', '2048'))
     WVPASSEQ(extra, ['hanky'])
     WVPASSEQ((opt.t, opt.q, opt.p, opt.l, opt.onlylong,
-              opt.neveropt), (3,1,7,19,1,None))
+              opt.neveropt, opt.Seed, opt.neg), (3,1,'7','19',1,None,1024,-1))
     WVPASSEQ((opt.deftest1, opt.deftest2, opt.deftest3, opt.deftest4,
-              opt.deftest5), (1,2,None,None,'[square'))
+              opt.deftest5), (1,'2',None,None,'[square'))
     WVPASSEQ((opt.stupid, opt.no_stupid), (True, None))
     WVPASSEQ((opt.smart, opt.no_smart), (None, True))
     WVPASSEQ((opt.x, opt.extended, opt.no_simple), (2,2,2))
     WVPASSEQ((opt.no_x, opt.no_extended, opt.simple), (False,False,False))
     WVPASSEQ(opt['#'], 7)
     WVPASSEQ(opt.compress, 7)
+    WVPASSEQ(opt.num, 2048)
+    WVPASSEQ(opt.n, 2048)
+    WVPASSEQ(opt.Seed, 1024)
+    WVPASSEQ(opt.S, 1024)
 
     (opt,flags,extra) = o.parse(['--onlylong', '-t', '--no-onlylong',
                                  '--smart', '--simple'])

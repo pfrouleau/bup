@@ -46,9 +46,9 @@ Long option flags are used as the option's key for the OptDict produced when
 parsing options.
 
 When the flag definition is ended with an equal sign, the option takes
-one string as an argument, and that string will be converted to an
-integer when possible. Otherwise, the option does not take an argument
-and corresponds to a boolean flag that is true when the option is
+one string as an argument. When it is ended with a plus sign, the option
+takes one integer as an argument. Otherwise, the option does not take an
+argument and corresponds to a boolean flag that is true when the option is
 given on the command line.
 
 The option's description is found at the right of its flags definition, after
@@ -155,6 +155,7 @@ class Options:
         self._shortopts = 'h?'
         self._longopts = ['help', 'usage']
         self._hasparms = {}
+        self._isnums = {}
         self._defaults = {}
         self._usagestr = self._gen_usage()  # this also parses the optspec
 
@@ -179,14 +180,18 @@ class Options:
             elif l:
                 (flags,extra) = (l + ' ').split(' ', 1)
                 extra = extra.strip()
+                has_parm = 0
+                is_num = 1
                 if flags.endswith('='):
                     flags = flags[:-1]
                     has_parm = 1
-                else:
-                    has_parm = 0
+                    is_num = 0
+                elif flags.endswith('+'):
+                    flags = flags[:-1]
+                    has_parm = 1
                 g = re.search(r'\[([^\]]*)\]$', extra)
                 if g:
-                    defval = _intify(g.group(1))
+                    defval = is_num and _intify(g.group(1)) or g.group(1)
                 else:
                     defval = None
                 flagl = flags.split(',')
@@ -197,9 +202,11 @@ class Options:
                     f,invert = _remove_negative_kv(_f, 0)
                     self._aliases[f] = (flag_main, invert_main ^ invert)
                     self._hasparms[f] = has_parm
+                    self._isnums[f] = is_num
                     if f == '#':
                         self._shortopts += '0123456789'
                         flagl_nice.append('-#')
+                        self._isnums[f] = 1
                     elif len(f) == 1:
                         self._shortopts += f + (has_parm and ':' or '')
                         flagl_nice.append('-' + f)
@@ -269,7 +276,7 @@ class Options:
                 if not self._hasparms[k]:
                     assert(v == '')
                     v = (opt._opts.get(k) or 0) + 1
-                else:
+                elif self._isnums[k]:
                     v = _intify(v)
             opt[k] = _invert(v, invert)
         return (opt,flags,extra)

@@ -15,7 +15,7 @@ a,auto     automatically use all existing .midx/.idx files as input
 f,force    merge produce exactly one .midx containing all objects
 p,print    print names of generated midx files
 check      validate contents of the given midx files (with -a, all midx files)
-max-files= maximum number of idx files to open at once [-1]
+max-files+ maximum number of idx files to open at once [-1]
 d,dir=     directory containing idx/midx files
 """
 

@@ -61,8 +61,8 @@ def report(count):
 optspec = """
 bup memtest [-n elements] [-c cycles]
 --
-n,number=  number of objects per cycle [10000]
-c,cycles=  number of cycles to run [100]
+n,number+  number of objects per cycle [10000]
+c,cycles+  number of cycles to run [100]
 ignore-midx  ignore .midx files, use only .idx files
 existing   test with existing objects instead of fake ones
 """

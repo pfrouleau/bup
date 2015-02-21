@@ -15,11 +15,11 @@ optspec = """
 bup damage [-n count] [-s maxsize] [-S seed] <filenames...>
 --
    WARNING: THIS COMMAND IS EXTREMELY DANGEROUS
-n,num=   number of blocks to damage
-s,size=  maximum size of each damaged block
+n,num+   number of blocks to damage
+s,size+  maximum size of each damaged block
 percent= maximum size of each damaged block (as a percent of entire file)
 equal    spread damage evenly throughout the file
-S,seed=  random number seed (for repeatable tests)
+S,seed+  random number seed (for repeatable tests)
 """
 o = options.Options(optspec)
 (opt, flags, extra) = o.parse(sys.argv[1:])

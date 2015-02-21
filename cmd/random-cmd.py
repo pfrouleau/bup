@@ -6,7 +6,7 @@ from bup.helpers import *
 optspec = """
 bup random [-S seed] <numbytes>
 --
-S,seed=   optional random number seed [1]
+S,seed+   optional random number seed [1]
 f,force   print random data to stdout even if it's a tty
 v,verbose print byte counter to stderr
 """
