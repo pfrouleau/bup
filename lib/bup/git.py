@@ -569,7 +569,7 @@ class PackWriter:
         self.compression_level = compression_level
 
         self.optimistic = optimistic
-        self.blobsinflight = []
+        self.blobsinflight = dict()
 
     def __del__(self):
         self.close()
@@ -639,10 +639,11 @@ class PackWriter:
         return self.objcache.exists(id, want_source=want_source)
 
 
-    def maybe_write(self, type, content):
+    def maybe_write(self, type, content, sha=None):
         """Write an object to the pack file if not present and return its id."""
         existed = True
-        sha = calc_hash(type, content)
+        if sha is None:
+            sha = calc_hash(type, content)
         if not self.exists(sha):
             existed = False
             self._write(sha, type, content)
@@ -654,7 +655,7 @@ class PackWriter:
         """Create a blob object in the pack with the supplied content."""
         if self.optimistic:
             sha = calc_hash('blob', blob)
-            self.blobsinflight.append((sha, 'blob', blob))
+            self.blobsinflight[sha] = ('blob', blob)
         else:
             (sha, _) = self.maybe_write('blob', blob)
 
@@ -668,16 +669,16 @@ class PackWriter:
         if not self.optimistic:
             return sha
 
-        existing_children = set()
         if existed:
             for (_, _, child) in shalist:
-                existing_children.add(child)
-
-        for (_, (hash, type, content)) in enumerate(self.blobsinflight):
-            if hash not in existing_children:
-                self.maybe_write(type, content)
-
-        self.blobsinflight = []
+                if child in self.blobsinflight:
+                    del self.blobsinflight[child]
+        else:
+            for (_, _, child) in shalist:
+                if child in self.blobsinflight:
+                    (btype, content) = self.blobsinflight[child]
+                    self.maybe_write(btype, content, child)
+                    del self.blobsinflight[child]
 
         return sha
 
@@ -711,8 +712,8 @@ class PackWriter:
 
     def _flush_inflight(self):
         if len(self.blobsinflight) > 0:
-            for (_, (_, type, content)) in enumerate(self.blobsinflight):
-                self.maybe_write(type, content)
+            for (sha, (btype, content)) in self.blobsinflight.iteritems():
+                self.maybe_write(btype, content, sha)
 
     def _end(self, run_midx=True):
         self._flush_inflight()
