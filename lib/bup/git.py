@@ -86,6 +86,22 @@ def get_commit_items(id, cp):
     return parse_commit(commit_content)
 
 
+def get_config(name, default):
+    p = subprocess.Popen(['git', 'config', name],
+                         stdout=subprocess.PIPE, preexec_fn=_gitenv())
+    try:
+        _git_wait('git config', p)
+    except:
+        return default
+    return p.stdout.read().strip() or default
+
+
+def set_config(name, value):
+    p = subprocess.Popen(['git', 'config', name, '{}'.format(value)],
+                         stdout=sys.stderr, preexec_fn=_gitenv())
+    _git_wait('git config', p)
+
+
 def repo(sub = '', repo_dir=None):
     """Get the path to the git repository or one of its subdirectories."""
     global repodir
@@ -921,13 +937,9 @@ def init_repo(path=None):
     _git_wait('git init', p)
     # Force the index version configuration in order to ensure bup works
     # regardless of the version of the installed Git binary.
-    p = subprocess.Popen(['git', 'config', 'pack.indexVersion', '2'],
-                         stdout=sys.stderr, preexec_fn = _gitenv())
-    _git_wait('git config', p)
+    set_config('pack.indexVersion', 2)
     # Enable the reflog
-    p = subprocess.Popen(['git', 'config', 'core.logAllRefUpdates', 'true'],
-                         stdout=sys.stderr, preexec_fn = _gitenv())
-    _git_wait('git config', p)
+    set_config('core.logAllRefUpdates', 'true')
 
 
 def check_repo_or_die(path=None):
