@@ -1,5 +1,5 @@
 import math
-from bup import _helpers
+from bup import _helpers, git
 from bup.helpers import *
 
 BLOB_MAX = 8192*4   # 8192 is the "typical" blob size for bupsplit
@@ -61,7 +61,7 @@ def readfile_iter(files, progress=None):
 def _splitbuf(buf, basebits, fanbits):
     while 1:
         b = buf.peek(buf.used())
-        (ofs, bits) = _helpers.splitbuf(b, 64)
+        (ofs, bits) = _helpers.splitbuf(b, git.min_blob_size())
         if ofs:
             if ofs > BLOB_MAX:
                 ofs = BLOB_MAX

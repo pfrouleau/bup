@@ -10,6 +10,8 @@ from bup import _helpers, path, midx, bloom, xstat
 
 max_pack_size = 1000*1000*1000  # larger packs will slow down pruning
 max_pack_objects = 200*1000  # cache memory usage is about 83 bytes per object
+min_blob_size_default = 56  # disk usage is around 56 bytes per blob,
+                            # so avoid to create blobs smaller than that
 
 verbose = 0
 ignore_midx = 0
@@ -100,6 +102,12 @@ def set_config(name, value):
     p = subprocess.Popen(['git', 'config', name, '{}'.format(value)],
                          stdout=sys.stderr, preexec_fn=_gitenv())
     _git_wait('git config', p)
+
+
+def min_blob_size():
+    # if the repo does not contains the config, then it was created before
+    # the addition of this config and it was 0 at that time.
+    return int(get_config('bup.minBlobSize', 0))
 
 
 def repo(sub = '', repo_dir=None):
@@ -940,6 +948,8 @@ def init_repo(path=None):
     set_config('pack.indexVersion', 2)
     # Enable the reflog
     set_config('core.logAllRefUpdates', 'true')
+    # Store the minimum blob size for this repository
+    set_config('bup.minBlobSize', min_blob_size_default)
 
 
 def check_repo_or_die(path=None):
@@ -958,6 +968,7 @@ def check_repo_or_die(path=None):
         else:
             log('error: %s\n' % e)
             sys.exit(14)
+    debug2('# minimum blob size = %d\n' % min_blob_size())
 
 
 _ver = None
